@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main, 'sdlc-**' ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      # Tier 1 + tier 2 of the test strategy (DECISIONS.md D-005): unit tests and
+      # H2-backed slices. Requires no Docker and no external services, so this is
+      # green on a clean checkout — the M0 exit criterion.
+      - name: Build and test
+        working-directory: team
+        run: mvn -B verify
+
+      # Tier 3 runs only where Docker is available. Tagged tests are excluded from
+      # the main run and opted into here.
+      - name: Integration tests (Testcontainers MySQL)
+        working-directory: team
+        run: mvn -B verify -Dgroups=integration -DfailIfNoTests=false
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Mirrors .githooks/pre-commit so a bypassed local hook is still caught.
+      - name: Scan tracked files for credential-shaped literals
+        run: |
+          set -e
+          PATTERN='sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9._-]{15,}|squ_[a-f0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+          if git ls-files -z | grep -zZv '\.md$' | xargs -0 grep -InE "$PATTERN" ; then
+            echo "::error::Credential-shaped literal found in a tracked file."
+            exit 1
+          fi
+          echo "No credential-shaped literals in tracked files."
+
+      - name: Fail if any .env file is tracked
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$' ; then
+            echo "::error::A .env file is tracked. It must be gitignored."
+            exit 1
+          fi
+          echo "No tracked .env files."

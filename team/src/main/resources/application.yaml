@@ -15,7 +15,9 @@ spring:
     open-in-view: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MariaDBDialect
+        # Dialect intentionally not set: Hibernate auto-detects it from the JDBC
+        # connection. The previous explicit MariaDBDialect drew a "does not need to
+        # be specified" warning against MySQL and leaked into H2 test contexts.
         type:
           preferred_uuid_jdbc_type: CHAR
   datasource:

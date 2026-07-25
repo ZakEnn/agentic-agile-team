@@ -1,0 +1,56 @@
+# Test profile — tier 2 of the strategy in DECISIONS.md D-005.
+#
+# Runs the full Spring context against in-memory H2 so CI is green on a clean
+# checkout with no hand-run MySQL and no Docker. Flyway is disabled here because
+# the migrations are MySQL-specific; the migration chain itself is verified
+# separately against real MySQL via Testcontainers (tier 3).
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:agile_team_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    # ddl-auto: none, matching production. The schema comes from the real Flyway
+    # migration chain, which turns out to run cleanly on H2 in MySQL mode — so
+    # tests verify the actual migrations rather than a Hibernate-generated schema.
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        type:
+          preferred_uuid_jdbc_type: CHAR
+  flyway:
+    enabled: true
+  ai:
+    anthropic:
+      # Placeholder only. Tests never reach the network: agents depend on the
+      # LlmGateway port and are wired with ScriptedLlmGateway (DECISIONS.md D-003).
+      api-key: test-key-never-used
+    mcp:
+      client:
+        enabled: false
+
+confluence:
+  base-url: http://confluence.invalid
+  access-token: test-token
+
+team:
+  skills:
+    directory: skills
+
+# All gates auto-approve in tests so the full pipeline can be exercised
+# end-to-end without a human. Production defaults are REQUIRED (D-007).
+sdlc:
+  gates:
+    spec-approval:
+      mode: AUTO_APPROVE
+    merge-approval:
+      mode: AUTO_APPROVE
+    production-deploy:
+      mode: AUTO_APPROVE
+  budget:
+    max-tokens-per-wave: 500000
+    max-stage-attempts: 3
