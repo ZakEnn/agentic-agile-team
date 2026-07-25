@@ -1,0 +1,14 @@
+package com.agile.team.domain.conversation;
+
+public enum MessageType {
+    SPECIFICATION_REQUEST,
+    SPECIFICATION_READY,
+    TASK_ASSIGNMENT,
+    IMPLEMENTATION_COMPLETE,
+    REVIEW_REQUEST,
+    REVIEW_COMPLETE,
+    QA_REQUEST,
+    QA_COMPLETE,
+    GOVERNANCE_CHECK,
+    WAVE_STATUS_UPDATE
+}

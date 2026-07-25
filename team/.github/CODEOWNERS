@@ -1,0 +1,10 @@
+# CODEOWNERS — Governance Skills require explicit approval before merge.
+# Changes to governance-sensitive skills (those affecting ReviewGate decisions)
+# must be reviewed and approved by the designated skill-governance team.
+
+# Review criteria skill — directly impacts governance gate
+/skills/review-criteria/ @team-leads @quality-guild
+
+# Non-governance skills — standard review process
+/skills/specification-template/ @product-owners
+/skills/git-conventions/ @tech-leads

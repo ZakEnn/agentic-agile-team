@@ -1,0 +1,38 @@
+#!/bin/sh
+# Secrets pre-commit guard (M0). See DECISIONS.md D-002.
+# Blocks a commit if any staged file contains a credential-shaped literal.
+# Install: git config core.hooksPath .githooks
+
+PATTERNS='sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9._-]{15,}|squ_[a-f0-9]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}'
+
+# Only scan added/copied/modified staged files; ignore deletions.
+FILES=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$FILES" ] && exit 0
+
+FOUND=0
+for f in $FILES; do
+    # .env files must never be committed at all.
+    case "$f" in
+        *.env|.env)
+            echo "BLOCKED: $f is a .env file and must never be committed."
+            FOUND=1
+            continue
+            ;;
+    esac
+    # Skip binaries and the plan/log docs, which legitimately discuss redacted key shapes.
+    case "$f" in
+        *.md) continue ;;
+    esac
+    if git show ":$f" 2>/dev/null | grep -Eq "$PATTERNS"; then
+        echo "BLOCKED: credential-shaped literal detected in $f"
+        FOUND=1
+    fi
+done
+
+if [ "$FOUND" -ne 0 ]; then
+    echo ""
+    echo "Commit rejected by .githooks/pre-commit."
+    echo "Move the value to an environment variable with NO default, then re-stage."
+    exit 1
+fi
+exit 0

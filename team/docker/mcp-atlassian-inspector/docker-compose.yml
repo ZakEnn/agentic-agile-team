@@ -1,0 +1,20 @@
+services:
+  mcp-atlassian-inspector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "6314:6314"
+      - "6317:6317"
+    environment:
+      - HOST=0.0.0.0
+      - CLIENT_PORT=6314
+      - SERVER_PORT=6317
+      - MCP_AUTO_OPEN_ENABLED=false
+      - MCP_PROXY_AUTH_TOKEN=${MCP_PROXY_AUTH_TOKEN:-mcp-inspector-token}
+      - CONFLUENCE_URL=${CONFLUENCE_URL:-https://espace.agir.orange.com}
+      - CONFLUENCE_PERSONAL_TOKEN=${CONFLUENCE_PERSONAL_TOKEN}
+      - CONFLUENCE_SSL_VERIFY=${CONFLUENCE_SSL_VERIFY:-true}
+      - READ_ONLY_MODE=${READ_ONLY_MODE:-true}
+      - CONFLUENCE_SPACES_FILTER=${CONFLUENCE_SPACES_FILTER:-EPE}
+    restart: unless-stopped
