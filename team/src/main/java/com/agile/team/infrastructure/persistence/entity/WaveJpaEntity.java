@@ -22,6 +22,20 @@ public class WaveJpaEntity {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    // --- Per-wave targeting context (V1.3.0). Previously compile-time constants. ---
+
+    @Column(name = "confluence_space_key", length = 100)
+    private String confluenceSpaceKey;
+
+    @Column(name = "gitlab_project", length = 500)
+    private String gitLabProject;
+
+    @Column(name = "jira_project_key", length = 50)
+    private String jiraProjectKey;
+
+    @Column(name = "language", length = 50)
+    private String language;
+
     @OneToMany(mappedBy = "wave", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     private List<AgentMessageJpaEntity> messages = new ArrayList<>();
 
@@ -60,4 +74,12 @@ public class WaveJpaEntity {
     public void setTasks(List<TaskJpaEntity> tasks) { this.tasks = tasks; }
     public List<StateTransitionEmbeddable> getTransitions() { return transitions; }
     public void setTransitions(List<StateTransitionEmbeddable> transitions) { this.transitions = transitions; }
+    public String getConfluenceSpaceKey() { return confluenceSpaceKey; }
+    public void setConfluenceSpaceKey(String confluenceSpaceKey) { this.confluenceSpaceKey = confluenceSpaceKey; }
+    public String getGitLabProject() { return gitLabProject; }
+    public void setGitLabProject(String gitLabProject) { this.gitLabProject = gitLabProject; }
+    public String getJiraProjectKey() { return jiraProjectKey; }
+    public void setJiraProjectKey(String jiraProjectKey) { this.jiraProjectKey = jiraProjectKey; }
+    public String getLanguage() { return language; }
+    public void setLanguage(String language) { this.language = language; }
 }

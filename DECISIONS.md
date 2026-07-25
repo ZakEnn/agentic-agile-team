@@ -170,6 +170,45 @@ than a pretend implementation.
 
 ---
 
+## D-010 — The spec stage runs synchronously in M1; durability arrives in M3
+
+**Context.** M1 needs the spec stage working end to end. The existing handoff
+mechanism is an in-JVM `ApplicationEventPublisher` + `@Async` bus, which
+SDLC_AGENT_PLAN.md identifies as the actual defect (no durability, no retry, no
+multi-instance safety).
+
+**Decision.** Run the spec stage synchronously inside `Orchestrator.startWave`.
+Do not build new agents on top of the event bus. Replace it wholesale in M3 with
+the DB-backed stage machine.
+
+**Why.** Two bad options were available — keep the broken async bus, or build the
+durable machine before a single agent works end to end. Synchronous execution is a
+third: it makes M1 deterministic and testable, and it means the durable machine in
+M3 is introduced against a working pipeline rather than a hypothetical one.
+
+**Consequence.** The HTTP call blocks for the duration of a model call. Acceptable
+for M1, unacceptable as a destination — M3 removes it.
+
+---
+
+## D-011 — Eval rubric is deterministic, not LLM-as-judge
+
+**Context.** M1 requires an eval harness for the Spec agent.
+
+**Decision.** Score with cheap deterministic checks: criteria count, testability
+markers, grounding in supplied documentation, fabrication detection.
+
+**Why.** Three reasons an LLM judge loses here: it costs money on every commit so it
+would not run on every commit; it can hallucinate its own verdict; and a judge model
+sharing the generator's blind spots agrees with precisely the failures most worth
+catching. The rubric does not measure whether a spec is *good* — it measures whether
+it is *usable*, which is the floor downstream agents depend on.
+
+**Consequence.** Subtle quality regressions will not be caught. An LLM-judge tier
+can be added later as a supplement, never as the gate.
+
+---
+
 ## D-009 — `CodeQualityScore` gains an explicit `UNKNOWN` state
 
 **Context.** The original `ReviewerAgentHandler` hardcoded

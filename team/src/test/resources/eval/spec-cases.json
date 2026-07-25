@@ -1,0 +1,29 @@
+[
+  {
+    "name": "sftp-retry-grounded",
+    "intent": "Make the SFTP poller resilient to transient network failures",
+    "keyword": "SFTP retry",
+    "documentation": "The SpringIntegrationSftpConfiguration poller currently aborts the whole flow on a socket timeout. Operations have asked for bounded retries with exponential backoff and an alert after the final attempt.",
+    "minCriteria": 2,
+    "mustGroundIn": ["retry", "backoff"],
+    "mustNotInvent": ["kafka", "redis"]
+  },
+  {
+    "name": "s3-listing-pagination",
+    "intent": "Handle paginated results when listing S3 objects",
+    "keyword": "S3 listing",
+    "documentation": "SpringIntegrationS3Configuration lists objects but only reads the first page of results, so buckets with more than 1000 objects are silently truncated.",
+    "minCriteria": 2,
+    "mustGroundIn": ["page"],
+    "mustNotInvent": ["glacier"]
+  },
+  {
+    "name": "no-documentation-available",
+    "intent": "Add a health endpoint that reports downstream connectivity",
+    "keyword": null,
+    "documentation": "",
+    "minCriteria": 1,
+    "mustGroundIn": [],
+    "mustNotInvent": []
+  }
+]

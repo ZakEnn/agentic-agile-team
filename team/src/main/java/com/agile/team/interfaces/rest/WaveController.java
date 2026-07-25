@@ -31,7 +31,7 @@ public class WaveController {
                 request.waveName(),
                 request.taskDescription(),
                 request.keyword(),
-                request.resolvedJiraTextLanguage()
+                request.toContext()
         );
         return ResponseEntity.ok(waveId.value().toString());
     }

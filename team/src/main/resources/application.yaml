@@ -2,6 +2,32 @@ team:
   skills:
     directory: ${SKILLS_DIRECTORY:skills}
 
+# Human-in-the-loop policy and cost guardrails.
+# Gates default to REQUIRED — supervised autonomy is the shipped posture, and
+# relaxing a gate is a deliberate, reviewable configuration change (DECISIONS.md D-007).
+sdlc:
+  gates:
+    spec-approval:
+      mode: ${GATE_SPEC_APPROVAL:REQUIRED}
+    merge-approval:
+      mode: ${GATE_MERGE_APPROVAL:REQUIRED}
+    production-deploy:
+      mode: ${GATE_PRODUCTION_DEPLOY:REQUIRED}
+  budget:
+    # A ceiling, not a target. Multi-agent pipelines compound token cost, and an
+    # unbounded retry loop is how that becomes a bill.
+    max-tokens-per-wave: ${MAX_TOKENS_PER_WAVE:1000000}
+    max-stage-attempts: ${MAX_STAGE_ATTEMPTS:3}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
 confluence:
   base-url: ${CONFLUENCE_BASE_URL:https://espace.agir.orange.com}
   access-token: ${CONFLUENCE_API_TOKEN:}

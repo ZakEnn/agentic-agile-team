@@ -1,5 +1,7 @@
 package com.agile.team.domain.wave;
 
+import com.agile.team.domain.gate.GateDecision;
+import com.agile.team.domain.gate.GateName;
 import com.agile.team.domain.review.ApprovalStatus;
 import com.agile.team.domain.review.CodeQualityScore;
 import com.agile.team.domain.review.ReviewDisposition;
@@ -47,11 +49,7 @@ class WaveTest {
 
     @Test
     void shouldTransitionToInProgress() {
-        Specification spec = new Specification(
-                SpecificationId.generate(), "Feature A", "Content", "page-1", List.of()
-        );
-        wave.addSpecification(spec);
-        wave.startExecution("HUMAN");
+        addSpecAndStartExecution();
 
         assertEquals(WaveStatus.IN_PROGRESS, wave.getStatus());
         assertEquals(1, wave.getTransitions().size());
@@ -61,6 +59,48 @@ class WaveTest {
     @Test
     void shouldNotStartWithoutSpecifications() {
         assertThrows(IllegalStateException.class, () -> wave.startExecution("HUMAN"));
+    }
+
+    @Test
+    void shouldNotStartWhenSpecificationHasNotPassedTheApprovalGate() {
+        // M1: an unapproved spec must not reach the Developer agent. The invariant
+        // lives in the aggregate so no handler can route around it.
+        wave.addSpecification(new Specification(
+                SpecificationId.generate(), "Feature A", "Content", "page-1", List.of("AC1")
+        ));
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> wave.startExecution("HUMAN"));
+        assertTrue(thrown.getMessage().contains("SPEC_APPROVAL"));
+    }
+
+    @Test
+    void shouldNotApproveSpecificationWithoutAcceptanceCriteria() {
+        Specification spec = new Specification(
+                SpecificationId.generate(), "Feature A", "Content", "page-1", List.of()
+        );
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> spec.applyDecision(GateDecision.approvedBy(GateName.SPEC_APPROVAL, "alice", "ok")));
+        assertTrue(thrown.getMessage().contains("acceptance criteria"));
+    }
+
+    @Test
+    void shouldRecordWhoApprovedTheSpecification() {
+        Specification spec = approvedSpec("alice");
+        assertTrue(spec.isApproved());
+        assertEquals("alice", spec.getDecidedBy());
+        assertNotNull(spec.getDecidedAt());
+    }
+
+    @Test
+    void shouldDistinguishAutomatedApprovalFromHumanApproval() {
+        // Auto-approvals must stay identifiable, otherwise trust metrics lie.
+        GateDecision auto = GateDecision.autoApproved(GateName.SPEC_APPROVAL);
+        GateDecision human = GateDecision.approvedBy(GateName.SPEC_APPROVAL, "alice", "looks good");
+
+        assertTrue(auto.isAutomated());
+        assertFalse(human.isAutomated());
     }
 
     @Test
@@ -120,10 +160,15 @@ class WaveTest {
     }
 
     private void addSpecAndStartExecution() {
-        Specification spec = new Specification(
-                SpecificationId.generate(), "Feature A", "Content", "page-1", List.of()
-        );
-        wave.addSpecification(spec);
+        wave.addSpecification(approvedSpec("HUMAN"));
         wave.startExecution("HUMAN");
+    }
+
+    private static Specification approvedSpec(String approver) {
+        Specification spec = new Specification(
+                SpecificationId.generate(), "Feature A", "Content", "page-1", List.of("AC1")
+        );
+        spec.applyDecision(GateDecision.approvedBy(GateName.SPEC_APPROVAL, approver, "approved for test"));
+        return spec;
     }
 }

@@ -20,8 +20,14 @@ public class Wave {
     private final List<Task> tasks;
     private final List<StateTransition> transitions;
     private final Instant createdAt;
+    /** Which Confluence space / GitLab project / Jira project this wave targets. */
+    private WaveContext context;
 
     public Wave(WaveId id, String name) {
+        this(id, name, WaveContext.forSpecOnly(null, null));
+    }
+
+    public Wave(WaveId id, String name, WaveContext context) {
         if (id == null) throw new IllegalArgumentException("Wave id must not be null");
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Wave name must not be blank");
         this.id = id;
@@ -31,11 +37,20 @@ public class Wave {
         this.tasks = new ArrayList<>();
         this.transitions = new ArrayList<>();
         this.createdAt = Instant.now();
+        this.context = context != null ? context : WaveContext.forSpecOnly(null, null);
     }
 
     /** Reconstruction constructor for loading from persistence */
     public Wave(WaveId id, String name, WaveStatus status, List<Specification> specifications,
                 List<Task> tasks, List<StateTransition> transitions, Instant createdAt) {
+        this(id, name, status, specifications, tasks, transitions, createdAt,
+                WaveContext.forSpecOnly(null, null));
+    }
+
+    /** Reconstruction constructor including targeting context. */
+    public Wave(WaveId id, String name, WaveStatus status, List<Specification> specifications,
+                List<Task> tasks, List<StateTransition> transitions, Instant createdAt,
+                WaveContext context) {
         this.id = id;
         this.name = name;
         this.status = status;
@@ -43,6 +58,24 @@ public class Wave {
         this.tasks = new ArrayList<>(tasks);
         this.transitions = new ArrayList<>(transitions);
         this.createdAt = createdAt;
+        this.context = context != null ? context : WaveContext.forSpecOnly(null, null);
+    }
+
+    /** Locate a specification owned by this wave. */
+    public java.util.Optional<Specification> findSpecification(
+            com.agile.team.domain.specification.SpecificationId specificationId) {
+        return specifications.stream()
+                .filter(s -> s.getId().equals(specificationId))
+                .findFirst();
+    }
+
+    /**
+     * True when at least one specification has passed the SPEC_APPROVAL gate.
+     * {@link #startExecution(String)} requires this: an unapproved spec must not
+     * reach the Developer agent.
+     */
+    public boolean hasApprovedSpecification() {
+        return specifications.stream().anyMatch(Specification::isApproved);
     }
 
     public void addSpecification(Specification specification) {
@@ -56,12 +89,27 @@ public class Wave {
         tasks.add(task);
     }
 
+    /**
+     * Begin execution. Requires at least one specification that has passed the
+     * SPEC_APPROVAL gate.
+     * <p>
+     * The approval requirement is enforced here, in the aggregate, rather than only
+     * in the orchestrator. The original system's governance failure was precisely
+     * that a correct invariant ({@code ReviewGate}) sat in the domain while the
+     * handler fed it fabricated inputs — an invariant a caller can route around is
+     * not an invariant. Making unapproved execution unrepresentable means no future
+     * handler can regress it by accident.
+     */
     public void startExecution(String authorizedBy) {
         if (status != WaveStatus.PLANNING) {
             throw new IllegalStateException("Can only start execution from PLANNING state");
         }
         if (specifications.isEmpty()) {
             throw new IllegalStateException("Cannot start wave without specifications");
+        }
+        if (!hasApprovedSpecification()) {
+            throw new IllegalStateException(
+                    "Cannot start wave: no specification has passed the SPEC_APPROVAL gate");
         }
         transition(WaveStatus.IN_PROGRESS, authorizedBy);
     }
@@ -99,4 +147,5 @@ public class Wave {
     public List<Task> getTasks() { return Collections.unmodifiableList(tasks); }
     public List<StateTransition> getTransitions() { return Collections.unmodifiableList(transitions); }
     public Instant getCreatedAt() { return createdAt; }
+    public WaveContext getContext() { return context; }
 }
