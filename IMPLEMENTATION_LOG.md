@@ -560,3 +560,95 @@ risks into the developer prompt.
   decides what happens next. Promotion beyond that is a human action by design.
 - `CommandDeploymentAdapter` needs a real deploy command configured. Unconfigured,
   it **refuses** rather than reporting a deployment that did not happen.
+
+---
+
+# Final summary
+
+**Branch:** `sdlc-agent-implementation` (6 commits from `master` at `568facf`)
+**Build:** `mvn verify` → **BUILD SUCCESS, 234 tests, 0 failures**, no Docker required
+**Integration:** `mvn verify -Dgroups=integration -DexcludedTestGroups=` → **4 tests green** on real `mysql:8.4`
+**Baseline was:** 34 tests, a pipeline with four of five stages commented out, and 8 live credentials in the working tree.
+
+## Fully implemented and verified
+
+| Capability | Evidence |
+|---|---|
+| **Secrets removed from code and history** | 8 credentials externalised to env vars with no defaults; `reviewer-agent`'s poisoned git history discarded; pre-commit hook **tested** by planting a fake key and confirming the block; CI secret-scan job; full-history scan clean |
+| **CI green on a clean checkout** | `mvn verify` passes with no MySQL, no Docker, no API key |
+| **Six specialised agents, one per SDLC domain** | Spec, Architect, Developer, QA, Reviewer, Release — all with tests |
+| **Approval computed, never asserted** | `ReviewVerdict.approvalStatus()` derives from finding severities; test proves prose saying "approved" cannot override a CRITICAL finding |
+| **Governance gate with real inputs** | `CodeQualityScore.UNKNOWN` fails closed; hardcoded `passing(80)` gone; every SonarQube failure path tested |
+| **Durable, resumable orchestration** | DB-backed queue with `FOR UPDATE SKIP LOCKED` + conditional claim; proven on real MySQL that **4 concurrent instances claiming 24 stages get disjoint sets**; crash recovery, bounded retry, dead-letter and per-wave token budget all proven |
+| **Real build/test exit codes** | 12 executor tests run **real processes**; a non-compiling change provably never reaches QA |
+| **QA that catches untested criteria** | A green suite with an unverified acceptance criterion **fails** — proven end to end |
+| **Design verified against the repository** | A design naming a non-existent module fails DESIGN and never reaches BUILD |
+| **HITL gates as configuration** | Three gates, `REQUIRED` by default, auto-approvals attributed to `AUTO:<gate>` so the audit trail never claims a human approved |
+| **Deployment guardrails** | Policy-as-code, fails closed; rollback reference captured before deploying and structurally mandatory |
+| **Observability** | Actuator + Micrometer; token/cost per role and stage; `waveId` propagated across the async boundary |
+| **Audit trail readable** | `GET /api/waves/{id}/conversation`; governance skill usage persisted |
+
+## Implemented but not fully verified
+
+- **The REST API surface.** Controllers are wired and compile, but there are no
+  MockMvc tests — coverage stops at the use-case layer. Low risk, genuinely untested.
+- **The real toolchain clients.** GitLab, Jira and SonarQube clients are pinned
+  against **recorded payloads** (which is how the never-working webhook bug was
+  caught), but have never run against a live endpoint.
+- **`SpringAiLlmGateway`.** The one component that cannot be tested without an API
+  key. Every agent is verified through the `LlmGateway` port; the Spring AI binding
+  itself is unexercised.
+- **`JiraPort.updateIssueStatus`** deliberately throws `UnsupportedOperationException`:
+  Jira transitions are workflow-specific and a wrong transition id silently moves an
+  issue to the wrong state, which is worse than not moving it.
+
+## BLOCKED — what I need from you
+
+1. **Revoke the 8 leaked credentials.** *Highest priority, and nothing in this
+   repository fixes it.* Removing a secret from a repo does not un-leak it. The
+   GitLab PAT and SonarQube token are write-capable against real Orange
+   infrastructure. Originals are backed up outside the repo (scratchpad
+   `SECRETS-BACKUP/`) purely so you can identify what to revoke.
+2. **An Anthropic API key** (as an env var, not in a file). Unblocks: the live
+   `SpringAiLlmGateway` path, and a real eval run instead of a rubric test.
+3. **Container sandboxing for the Developer stage.** `LocalCommandCodeExecutor`
+   stops an agent's *mistake*, not an agent's *compromise*. Needs a container runtime
+   the app may drive and a decision on the egress allowlist. **Until then, do not
+   point the Developer stage at a repository whose inputs you do not control.**
+4. **A throwaway branch on a real repository.** This unblocks the single most
+   important open question in the whole build (below).
+5. **Corpora only your team has:** ~20 Confluence-page/specification pairs for the
+   spec eval, and ~30 reviewed MRs with known dispositions for measuring reviewer
+   false-positive rate. The machinery exists; the data cannot be invented.
+
+## The honest assessment
+
+The plan said the gap was not orchestration but that *nothing in this repository
+could write, build, or ship code*. That is now half-closed. The system can apply
+changes to a workspace, run a real build, refuse to advance when it fails, and
+verify acceptance criteria against a real test run — all durably and with real
+governance.
+
+**What remains genuinely unproven is the thing the plan flagged as highest-risk:
+whether a model can produce a compiling, correct change for a real feature in a real
+repository.** Everything around that is built and tested. That question needs an API
+key and one real branch, and no amount of further engineering answers it.
+
+Two things I would not have found by reading the code, both caught by tests:
+
+- The ported webhook handler had **never worked** — camelCase DTOs against GitLab's
+  snake_case, binding to null, with `FAIL_ON_UNKNOWN_PROPERTIES` disabled so nothing
+  ever threw.
+- A **sub-millisecond timestamp race** in the stage queue that would have shown up in
+  production as waves mysteriously idling for one poll cycle.
+
+## Recommended next steps
+
+1. **Revoke the credentials today.** Everything else can wait; this cannot.
+2. Set `ANTHROPIC_API_KEY` and run one wave end to end against a scratch repository
+   with all gates `REQUIRED`. Watch where the model actually fails — that is the real
+   backlog, and it will not match anyone's guess.
+3. Harvest the two corpora and get baseline numbers. Without them you are tuning blind.
+4. Sandbox the Developer stage before pointing it at anything real.
+5. Only then consider relaxing a gate — and only the one whose measured override rate
+   is near zero.
