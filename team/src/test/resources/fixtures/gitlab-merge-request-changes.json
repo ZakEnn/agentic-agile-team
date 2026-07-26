@@ -1,0 +1,26 @@
+{
+  "id": 155016530,
+  "iid": 42,
+  "changes": [
+    {
+      "old_path": "src/main/java/com/orange/epe/SftpPoller.java",
+      "new_path": "src/main/java/com/orange/epe/SftpPoller.java",
+      "a_mode": "100644",
+      "b_mode": "100644",
+      "new_file": false,
+      "renamed_file": false,
+      "deleted_file": false,
+      "diff": "@@ -12,6 +12,14 @@ public class SftpPoller {\n-    public void poll() {\n-        session.connect();\n+    public void poll() {\n+        for (int attempt = 0; attempt < maxAttempts; attempt++) {\n+            try {\n+                session.connect();\n+                return;\n+            } catch (SocketTimeoutException e) {\n+                backoff(attempt);\n+            }\n+        }\n     }\n"
+    },
+    {
+      "old_path": "src/test/java/com/orange/epe/SftpPollerTest.java",
+      "new_path": "src/test/java/com/orange/epe/SftpPollerTest.java",
+      "a_mode": "0",
+      "b_mode": "100644",
+      "new_file": true,
+      "renamed_file": false,
+      "deleted_file": false,
+      "diff": "@@ -0,0 +1,10 @@\n+class SftpPollerTest {\n+    @Test\n+    void shouldRetryOnTimeout() { }\n+}\n"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "object_kind": "merge_request",
+  "event_type": "merge_request",
+  "user": {
+    "id": 4355,
+    "name": "A Developer",
+    "username": "a.developer"
+  },
+  "project": {
+    "id": 278964,
+    "name": "epe-rating-ftth-passive",
+    "web_url": "https://gitlab.tech.orange/epe/epe-rating-ftth-passive",
+    "namespace": "epe",
+    "path_with_namespace": "epe/epe-rating-ftth-passive",
+    "default_branch": "main"
+  },
+  "object_attributes": {
+    "id": 155016530,
+    "iid": 42,
+    "target_branch": "main",
+    "source_branch": "feature/SCA-1234-sftp-retry",
+    "title": "SCA-1234 Add retry with exponential backoff to the SFTP poller",
+    "state": "opened",
+    "action": "open",
+    "url": "https://gitlab.tech.orange/epe/epe-rating-ftth-passive/-/merge_requests/42"
+  },
+  "labels": [],
+  "repository": {
+    "name": "epe-rating-ftth-passive",
+    "url": "git@gitlab.tech.orange:epe/epe-rating-ftth-passive.git"
+  }
+}

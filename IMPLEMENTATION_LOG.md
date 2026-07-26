@@ -196,3 +196,95 @@ worth catching.
   anything meaningful about real performance. The machinery is done; the corpus is
   not, and I cannot invent it.
 - No live-model eval run — requires an API key (see BLOCKED in the final section).
+
+---
+
+## M2 — Merge `reviewer-agent` in as the Reviewer Agent
+
+**Status: COMPLETE** · 158 tests green · commit `feat(m2)`
+
+The highest-leverage milestone: it converts the best existing asset into the
+system's one genuinely differentiated capability, and it delivers standalone value
+— a working review bot — even if the rest of the roadmap stalls.
+
+### What I built
+
+**Real toolchain adapters, replacing prompt-and-pray.** `GitLabRestClient`,
+`JiraRestClient` and `SonarQubeRestClient` now implement `GitLabPort`, `JiraPort`
+and `SonarQubePort` with actual HTTP calls. The three `mcp/*Adapter` classes they
+replace implemented the same ports by sending prose to a model with MCP disabled —
+they could only fabricate.
+
+**Approval is computed, not asserted.** `Severity` encodes the taxonomy from
+`skills/review-criteria/SKILL.md` (`CRITICAL`/`MAJOR` block, `MINOR`/`SUGGESTION`
+do not). `ReviewVerdict.approvalStatus()` derives the disposition from classified
+findings; the prompt explicitly instructs the model **not** to state one. A verdict
+whose summary reads "this is approved and looks great" alongside a CRITICAL finding
+returns `CHANGES_REQUESTED` — there is a test for exactly that.
+
+**The gate fails closed.** `CodeQualityScore` gained `QualityGateStatus.UNKNOWN`.
+Every SonarQube failure path — unreachable, unconfigured, no analysis (`NONE`),
+malformed response, no project key supplied — yields `UNKNOWN`, which does not
+pass `ReviewGate`. The hardcoded `passing(80)` is gone.
+
+**Governance provenance.** Each verdict records which governance skills produced it,
+and the skill audit trail is now **persisted** (`V1.5.0`, `SkillAuditPort`) instead
+of living in an in-memory `ArrayList` that vanished on restart.
+
+**Externalised prompt.** `resources/prompts/review.md`, loaded by `PromptTemplates`.
+Substitution is a literal `${name}` replace rather than a templating engine —
+deliberately, because prompt values here are **code diffs** full of braces, dollars
+and backslashes, and that is exactly the input a templating engine mangles.
+
+**Delivery.** `ReviewCommentFormatter` (decision first, blocking findings before
+non-blocking), `PerformReviewUseCase`, and `ReviewController` with a manual trigger
+and the GitLab webhook.
+
+### The bug that mattered most
+
+The ported `reviewer-agent` code **had never worked over a webhook**. Its DTOs
+declared `objectKind`/`objectAttributes`/`sourceBranch`/`oldPath` with no
+`@JsonProperty` and no naming strategy; GitLab sends snake_case. Every field bound
+to null, and since Spring Boot disables `FAIL_ON_UNKNOWN_PROPERTIES`, nothing ever
+threw — so `payload.objectAttributes().action()` NullPointer-ed on every real
+delivery, and the reviewer would have analysed diffs with null branch names.
+
+A defect that produces nulls instead of exceptions is invisible without a test.
+`GitLabDtoContractTest` now pins all three payload shapes against recorded fixtures.
+
+### Decisions made and why
+
+- **Explicit `@JsonProperty` over a global `SNAKE_CASE` strategy.** A global strategy
+  would silently change how *this service's own* REST API serialises — a wide,
+  invisible change to fix a local problem. Annotations keep the contract visible
+  where it applies.
+- **`RestClient.builder()` rather than an injected `RestClient.Builder`.** Spring
+  Boot 4 with the webmvc starter does not auto-configure that bean; this also
+  matches what `ConfluenceRestClient` already did.
+- **`JiraPort.updateIssueStatus` throws `UnsupportedOperationException`** rather
+  than guessing. Jira transitions are workflow-specific, and a wrong transition id
+  silently moves an issue to the wrong state — worse than not moving it. Recorded
+  as a known limitation rather than faked.
+- **Archived `reviewer-agent` to `archive/`** with a README mapping every ported
+  piece to its new home. Its stack (Spring Boot 3.5.8, EOL 30 June 2026) cannot
+  receive security patches.
+
+### What I verified
+
+- **158 tests, 0 failures.** New coverage: 9 GitLab contract tests against recorded
+  payloads, 13 `ReviewVerdict` tests (disposition computation, fail-closed gate),
+  11 `ReviewerAgent` tests (real gate attached, degraded Jira, degraded Sonar,
+  ungoverned warning), 8 SonarQube mapping tests, 7 Jira extraction tests, 7
+  prompt-template tests including the hostile-diff case, 6 formatter tests.
+- Migration chain now V1.0.0 → V1.5.0, applies cleanly.
+
+### What is still open
+
+- **No live integration test against a real GitLab/Jira/SonarQube.** The clients are
+  verified against recorded payloads, not live endpoints — that needs credentials
+  (BLOCKED).
+- **Precision tuning is machinery-only.** The plan calls for a 30-MR eval set with
+  known dispositions and a tracked false-positive rate. The structure supports it
+  (`Finding` is countable by severity), but the corpus needs real reviewed MRs from
+  the team.
+- `JiraPort.updateIssueStatus` unimplemented (see above).

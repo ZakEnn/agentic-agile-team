@@ -1,5 +1,6 @@
 package com.agile.team.application.usecase;
 
+import com.agile.team.domain.port.SkillAuditPort;
 import com.agile.team.domain.port.SkillPort;
 import com.agile.team.domain.port.SkillPort.SkillDescriptor;
 import com.agile.team.domain.agent.AgentRole;
@@ -8,8 +9,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -30,10 +29,11 @@ public class SkillGovernanceUseCase {
     private static final Logger log = LoggerFactory.getLogger(SkillGovernanceUseCase.class);
 
     private final SkillPort skillPort;
-    private final List<SkillAuditEntry> auditLog = Collections.synchronizedList(new ArrayList<>());
+    private final SkillAuditPort auditPort;
 
-    public SkillGovernanceUseCase(SkillPort skillPort) {
+    public SkillGovernanceUseCase(SkillPort skillPort, SkillAuditPort auditPort) {
         this.skillPort = skillPort;
+        this.auditPort = auditPort;
     }
 
     /**
@@ -74,24 +74,25 @@ public class SkillGovernanceUseCase {
      * This creates traceability between the specific skill version used and the review outcome.
      */
     public void recordSkillUsage(String skillName, String waveId, String agentId) {
-        SkillAuditEntry entry = new SkillAuditEntry(
-                skillName, waveId, agentId, Instant.now()
-        );
-        auditLog.add(entry);
+        auditPort.record(new SkillAuditPort.SkillUsage(skillName, waveId, agentId, Instant.now()));
         log.info("Governance skill usage recorded: skill={}, wave={}, agent={}", skillName, waveId, agentId);
     }
 
     /**
-     * Returns the audit log of governance skill usage (for observability/compliance).
+     * The audit log of governance skill usage.
+     * <p>
+     * Now backed by {@link SkillAuditPort} rather than an in-memory list. The
+     * previous implementation kept entries in a
+     * {@code Collections.synchronizedList(new ArrayList<>())}, so the traceability
+     * this class documents was lost on every restart and invisible to any other
+     * instance — an audit trail that does not survive a restart is not one.
      */
-    public List<SkillAuditEntry> getAuditLog() {
-        return Collections.unmodifiableList(auditLog);
+    public List<SkillAuditPort.SkillUsage> getAuditLog() {
+        return auditPort.findAll();
     }
 
-    public record SkillAuditEntry(
-            String skillName,
-            String waveId,
-            String agentId,
-            Instant timestamp
-    ) {}
+    /** Governance skills applied during a specific wave. */
+    public List<SkillAuditPort.SkillUsage> getAuditLogForWave(String waveId) {
+        return auditPort.findByWave(waveId);
+    }
 }

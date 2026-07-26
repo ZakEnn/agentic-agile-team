@@ -32,6 +32,22 @@ confluence:
   base-url: ${CONFLUENCE_BASE_URL:https://espace.agir.orange.com}
   access-token: ${CONFLUENCE_API_TOKEN:}
 
+# Toolchain integrations. All are deterministic REST clients — no port is ever
+# backed by a model call. Absent credentials degrade explicitly: SonarQube reports
+# UNKNOWN (which fails the ReviewGate), Jira context is skipped and noted.
+gitlab:
+  base-url: ${GITLAB_BASE_URL:https://gitlab.tech.orange}
+  token: ${GITLAB_API_TOKEN:}
+
+jira:
+  base-url: ${JIRA_BASE_URL:https://portail.agir.orange.com}
+  email: ${JIRA_EMAIL:}
+  api-token: ${JIRA_API_TOKEN:}
+
+sonarqube:
+  base-url: ${SONARQUBE_URL:https://sqaas.dos.tech.orange}
+  token: ${SONARQUBE_API_TOKEN:}
+
 spring:
   application:
     name: team

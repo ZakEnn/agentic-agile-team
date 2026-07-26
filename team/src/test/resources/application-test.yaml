@@ -37,6 +37,22 @@ confluence:
   base-url: http://confluence.invalid
   access-token: test-token
 
+# Deliberately unconfigured. Tests must never reach a real endpoint, and the
+# unconfigured path is itself worth exercising: SonarQube must report UNKNOWN
+# rather than inventing a pass.
+gitlab:
+  base-url: http://gitlab.invalid
+  token: ""
+
+jira:
+  base-url: https://jira.invalid
+  email: ""
+  api-token: ""
+
+sonarqube:
+  base-url: https://sonarqube.invalid
+  token: ""
+
 team:
   skills:
     directory: skills

@@ -14,11 +14,13 @@ class SkillGovernanceUseCaseTest {
 
     private SkillGovernanceUseCase useCase;
     private StubSkillPort stubSkillPort;
+    private InMemorySkillAudit auditPort;
 
     @BeforeEach
     void setUp() {
         stubSkillPort = new StubSkillPort();
-        useCase = new SkillGovernanceUseCase(stubSkillPort);
+        auditPort = new InMemorySkillAudit();
+        useCase = new SkillGovernanceUseCase(stubSkillPort, auditPort);
     }
 
     @Test
@@ -66,7 +68,29 @@ class SkillGovernanceUseCaseTest {
         assertEquals("review-criteria", entry.skillName());
         assertEquals("wave-123", entry.waveId());
         assertEquals("agent-456", entry.agentId());
-        assertNotNull(entry.timestamp());
+        assertNotNull(entry.usedAt());
+    }
+
+    @Test
+    void should_scopeAuditEntries_byWave() {
+        useCase.recordSkillUsage("review-criteria", "wave-1", "agent-1");
+        useCase.recordSkillUsage("review-criteria", "wave-2", "agent-1");
+
+        assertEquals(1, useCase.getAuditLogForWave("wave-1").size());
+        assertEquals(2, useCase.getAuditLog().size());
+    }
+
+    /** In-memory audit port. Production uses the JPA-backed adapter. */
+    private static class InMemorySkillAudit implements com.agile.team.domain.port.SkillAuditPort {
+        private final List<SkillUsage> entries = new java.util.ArrayList<>();
+
+        @Override public void record(SkillUsage usage) { entries.add(usage); }
+        @Override public List<SkillUsage> findByWave(String waveId) {
+            return entries.stream()
+                    .filter(e -> java.util.Objects.equals(e.waveId(), waveId))
+                    .toList();
+        }
+        @Override public List<SkillUsage> findAll() { return List.copyOf(entries); }
     }
 
     /**
