@@ -36,11 +36,22 @@ import static org.junit.jupiter.api.Assertions.*;
 class StageMachineIntegrationTest {
 
     @TestConfiguration
-    static class ScriptedLlm {
+    static class ScriptedDependencies {
         @Bean
         @Primary
         ScriptedLlmGateway scriptedLlmGateway() {
             return new ScriptedLlmGateway();
+        }
+
+        /**
+         * Replaces the real command executor so the pipeline can be driven end to end
+         * without invoking a build. {@code LocalCommandCodeExecutorTest} covers the
+         * real thing against real processes.
+         */
+        @Bean
+        @Primary
+        com.agile.team.support.ScriptedCodeExecutor scriptedCodeExecutor() {
+            return new com.agile.team.support.ScriptedCodeExecutor();
         }
     }
 
@@ -67,9 +78,13 @@ class StageMachineIntegrationTest {
 
     private WaveId waveId;
 
+    @Autowired com.agile.team.support.ScriptedCodeExecutor codeExecutor;
+    @Autowired com.agile.team.infrastructure.persistence.ArtifactCodec codec;
+
     @BeforeEach
     void setUp() {
         llm.reset();
+        codeExecutor.reset();
         // Order matters: stage_run and conversations reference waves.
         stageRunJpa.deleteAll();
         conversationJpa.deleteAll();
@@ -288,7 +303,103 @@ class StageMachineIntegrationTest {
         assertTrue(types.contains(MessageType.STAGE_COMPLETED));
     }
 
+    // --- the pipeline connected: SPEC -> approve -> BUILD -> VERIFY ---
+
+    /*
+     * DESIGN sits between SPEC and BUILD in the pipeline and lands in M5, so these
+     * tests enqueue BUILD directly with the approved spec — exactly what the DESIGN
+     * stage will hand over once it exists. Testing what M4 actually delivers rather
+     * than stubbing a stage that has not been built.
+     */
+
+    @Test
+    void shouldCarryAnApprovedSpecThroughBuildAndVerify() {
+        llm.respondWith(DRAFT)
+           .respondWith(CHANGE_PLAN)
+           .respondWith(assessmentVerifyingAll());
+        codeExecutor.succeedsWith("BUILD SUCCESS")   // developer build
+                    .succeedsWith("Tests run: 4")     // developer tests
+                    .succeedsWith("Tests run: 4");    // QA run
+
+        givenApprovedSpecAndEnqueuedBuild();
+        worker.drain(5);
+
+        assertEquals(StageStatus.SUCCEEDED,
+                stageRuns.findByWaveAndStage(waveId, SdlcStage.BUILD).orElseThrow().getStatus());
+        assertEquals(StageStatus.SUCCEEDED,
+                stageRuns.findByWaveAndStage(waveId, SdlcStage.VERIFY).orElseThrow().getStatus());
+    }
+
+    @Test
+    void shouldFailTheBuildStageWhenTheBuildDoesNotCompile() {
+        // The core guarantee of M4: an implementation that does not compile cannot
+        // advance, whatever the model says about it.
+        llm.respondWith(DRAFT).respondWith(CHANGE_PLAN);
+        codeExecutor.failsWith(1, "SftpPoller.java:[12,5] cannot find symbol");
+
+        givenApprovedSpecAndEnqueuedBuild();
+        worker.pollOnce();
+
+        StageRun build = stageRuns.findByWaveAndStage(waveId, SdlcStage.BUILD).orElseThrow();
+        assertEquals(StageStatus.RETRYING, build.getStatus());
+        assertTrue(build.getErrorMessage().contains("cannot find symbol"),
+                "the compiler output must be retained as retry feedback");
+        assertTrue(stageRuns.findByWaveAndStage(waveId, SdlcStage.VERIFY).isEmpty(),
+                "a non-compiling change must not reach QA");
+    }
+
+    @Test
+    void shouldFailVerifyWhenACriterionHasNoTestEvenThoughTheSuiteIsGreen() {
+        llm.respondWith(DRAFT)
+           .respondWith(CHANGE_PLAN)
+           .respondWith(assessmentMissingOneCriterion());
+        codeExecutor.succeedsWith("BUILD SUCCESS")
+                    .succeedsWith("Tests run: 2")
+                    .succeedsWith("Tests run: 2, Failures: 0");
+
+        givenApprovedSpecAndEnqueuedBuild();
+        worker.drain(5);
+
+        StageRun verify = stageRuns.findByWaveAndStage(waveId, SdlcStage.VERIFY).orElseThrow();
+        assertEquals(StageStatus.RETRYING, verify.getStatus());
+        assertTrue(verify.getErrorMessage().contains("Unverified criteria"));
+    }
+
+    private void givenApprovedSpecAndEnqueuedBuild() {
+        waveId = start();
+        worker.pollOnce();
+        approveSpec();
+        // Stand in for the DESIGN handover.
+        Specification spec = waves.findById(waveId).orElseThrow().getSpecifications().get(0);
+        stageRuns.save(StageRun.enqueue(waveId, SdlcStage.BUILD, codec.write(spec.toDraft()), 3));
+    }
+
     // --- helpers ---
+
+    private static final com.agile.team.domain.artifact.ChangePlan CHANGE_PLAN =
+            new com.agile.team.domain.artifact.ChangePlan(
+                    "Added a bounded retry loop.",
+                    List.of(new com.agile.team.domain.artifact.ChangePlan.FileEdit(
+                            "src/main/java/SftpPoller.java", "class SftpPoller {}")));
+
+    private com.agile.team.application.agent.QaAgent.QaAssessment assessmentVerifyingAll() {
+        return new com.agile.team.application.agent.QaAgent.QaAssessment(
+                DRAFT.acceptanceCriteria().stream()
+                        .map(c -> new com.agile.team.domain.artifact.QaVerdict.CriterionResult(
+                                c, true, "verified by a test"))
+                        .toList(),
+                List.of(), "", "all verified");
+    }
+
+    private com.agile.team.application.agent.QaAgent.QaAssessment assessmentMissingOneCriterion() {
+        List<String> criteria = DRAFT.acceptanceCriteria();
+        return new com.agile.team.application.agent.QaAgent.QaAssessment(
+                List.of(new com.agile.team.domain.artifact.QaVerdict.CriterionResult(
+                                criteria.get(0), true, "verified by shouldRetryOnTimeout"),
+                        new com.agile.team.domain.artifact.QaVerdict.CriterionResult(
+                                criteria.get(1), false, "no test covers the alert path")),
+                List.of(), "", "one criterion unverified");
+    }
 
     private WaveId start() {
         return orchestrator.startWave(new Orchestrator.StartWaveCommand(

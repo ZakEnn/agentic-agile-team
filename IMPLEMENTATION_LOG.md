@@ -383,3 +383,105 @@ deterministically instead of sleeping.
   idempotency keys covers the same need here (stage transitions are the only events),
   so a separate outbox would be ceremony without a consumer. Revisit if external
   systems need to subscribe to wave events.
+
+---
+
+## M4 — The Developer and QA agents
+
+**Status: CORE COMPLETE, one part BLOCKED** · 217 tests green · commit `feat(m4)`
+
+The plan calls this the highest-risk milestone and the part neither original project
+had ever attempted. Here is precisely what was built and what was not.
+
+### What I built
+
+**`CodeExecutor` port + `LocalCommandCodeExecutor`.** Runs real processes and
+reports **real exit codes**. This is the component everything downstream depends on,
+because it is the only thing in the system that can contradict a model about its own
+work. Guardrails: workspace path confinement (traversal refused), a command
+allowlist that deliberately excludes shells, and a hard timeout.
+
+**`DeveloperAgent`.** The model produces a `ChangePlan` (complete file contents, not
+diffs); the executor writes it into a confined workspace; a real build and a real
+test run decide the outcome. A failure throws `BuildFailedException` carrying **the
+compiler's own output**, which the stage machine feeds into the next attempt — that
+feedback loop is the only mechanism by which a retry differs from a repeat.
+
+**`QaAgent`.** The runner decides whether the suite is green (exit code); the model
+maps individual tests to individual acceptance criteria (genuine judgment); the
+verdict is computed from both. `QaAssessment` — what the model returns —
+**deliberately has no `passed` field**, so the model has no way to assert an outcome.
+There is a test asserting that field does not exist.
+
+**The rule that makes VERIFY worth having:** a green suite that does not exercise a
+criterion is **not** a pass. `QaVerdict.from` requires `suiteGreen && all criteria
+verified`. An unverified criterion fails the stage and sends it back to BUILD.
+
+**Stage handlers.** `BuildStageHandler` and `VerifyStageHandler` wire both agents
+into the durable machine. BUILD **keeps** its workspace so VERIFY tests the build
+that was actually produced rather than a re-creation of it; a failed attempt's
+workspace is discarded so the retry starts clean.
+
+### Decisions made and why
+
+- **D-008 confirmed: delegate, don't hand-roll.** What is implemented is the
+  verifiable part — propose changes, apply them, build, test, report the truth.
+  Swapping in Claude Code or OpenHands is an alternative `CodeExecutor`, not a
+  redesign.
+- **Workspace lifetime belongs to the handler, not the agent.** The handler is what
+  knows BUILD and VERIFY need the same workspace. I refactored this mid-milestone
+  after an early version smuggled the workspace id through a note string, which was
+  the wrong seam.
+- **Complete file contents, not diffs.** Patch application is a second failure mode
+  on top of an already-unreliable step; a file written verbatim either compiles or
+  does not.
+
+### The flaky-test hunt, and what it turned up
+
+A test failed intermittently across full-suite runs but passed in isolation. Root
+cause was **not** test pollution: `stage_run.available_at` was written with
+microsecond precision, and a stage enqueued and claimed within the same instant
+could have its `available_at` land microseconds *after* the claim's `now` — making a
+freshly enqueued stage invisible to the very next poll. Fixed by truncating both
+sides of the comparison to milliseconds (`StageRun.now()`).
+
+That is a real production bug, not a test artifact: under the real 2-second poll it
+would be rare, but it would have shown up as waves that mysteriously sat still for
+one cycle. Verified with three consecutive full-suite runs.
+
+### What I verified
+
+- **217 tests green.** New: 12 executor tests running **real processes** (genuine
+  exit codes, traversal refusal, allowlist enforcement, shells rejected by default,
+  workspace isolation and cleanup); 14 Developer agent tests; 9 QA agent tests;
+  3 end-to-end pipeline tests through the durable machine.
+- Proven: a non-compiling change never reaches QA; test failure fails the stage;
+  a timeout is a failure; the compiler's output reaches the retry prompt; an
+  unverified criterion fails VERIFY even with a green suite.
+
+### BLOCKED — what I could not build, and exactly what it needs
+
+1. **Container sandboxing.** `LocalCommandCodeExecutor` provides path confinement, a
+   command allowlist and a timeout. **That stops an agent's mistake, not an agent's
+   compromise.** The plan's §2.6 threat is real: an agent reading Confluence pages
+   written by other people while holding a GitLab write token is a live
+   injection-to-exfiltration path. **To unblock:** a container runtime the app may
+   drive (Docker socket or a Kubernetes job API), plus a decision on the egress
+   allowlist. Until then, do not point the Developer stage at a repository whose
+   inputs you do not control.
+2. **Vendor coding-agent integration.** Claude Code / OpenHands as an alternative
+   `CodeExecutor`. **To unblock:** an API key and the hosting decision. The port and
+   its two implementations exist; this is an adapter plus a credential.
+3. **A real end-to-end run against a real repository.** Everything above is verified
+   against scripted models and real local processes. Whether the *model* can produce
+   a compiling change for a real feature in the target repository is unmeasured, and
+   it is the single most important open question in the whole build. **To unblock:**
+   an API key and one throwaway branch on a real project.
+
+### Also open
+
+- The DESIGN stage sits between SPEC and BUILD and has no handler until M5, so the
+  end-to-end tests enqueue BUILD directly — standing in for the handover DESIGN will
+  perform. The pipeline is not yet continuous from spec to review.
+- No MR is opened yet: `Implementation.mergeRequestIid` is populated only once the
+  Developer stage is pointed at a real repository with a real branch.

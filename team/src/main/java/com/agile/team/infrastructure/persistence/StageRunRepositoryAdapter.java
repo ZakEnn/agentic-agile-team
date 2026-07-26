@@ -77,7 +77,9 @@ public class StageRunRepositoryAdapter implements StageRunRepository {
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public List<StageRun> claimDueStages(String instanceId, int limit) {
-        Instant now = Instant.now();
+        // Millisecond-truncated on both sides of the available_at comparison; see
+        // StageRun.now() for why sub-millisecond precision made this race.
+        Instant now = StageRun.now();
         List<StageRunJpaEntity> candidates = selectCandidates(now, limit);
 
         List<StageRun> claimed = new ArrayList<>(candidates.size());

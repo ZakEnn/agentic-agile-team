@@ -18,6 +18,21 @@ sdlc:
     # unbounded retry loop is how that becomes a bill.
     max-tokens-per-wave: ${MAX_TOKENS_PER_WAVE:1000000}
     max-stage-attempts: ${MAX_STAGE_ATTEMPTS:3}
+  # Code execution for the Developer and QA stages.
+  #
+  # SECURITY: path confinement, a command allowlist and a timeout stop an agent's
+  # mistake. They do not stop an agent's compromise. Production must run this inside
+  # a container with no ambient credentials and allow-listed egress - see
+  # IMPLEMENTATION_LOG.md (M4, BLOCKED). Shells are deliberately absent from the
+  # allowlist: permitting sh or cmd would make the list decorative.
+  executor:
+    workspace-root: ${SDLC_WORKSPACE_ROOT:}
+    allowed-commands: ${SDLC_ALLOWED_COMMANDS:mvn,mvnw,mvnw.cmd,gradle,gradlew,npm,node,git,java}
+    default-timeout-seconds: ${SDLC_EXEC_TIMEOUT:600}
+  build:
+    command: ${SDLC_BUILD_COMMAND:mvn,-q,-B,compile}
+    test-command: ${SDLC_TEST_COMMAND:mvn,-q,-B,test}
+    timeout-seconds: ${SDLC_BUILD_TIMEOUT:900}
   worker:
     poll-interval-ms: ${WORKER_POLL_INTERVAL_MS:2000}
     batch-size: ${WORKER_BATCH_SIZE:5}

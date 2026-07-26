@@ -68,7 +68,7 @@ public class StageRun {
      * instances both react to the same completion.
      */
     public static StageRun enqueue(WaveId waveId, SdlcStage stage, String inputArtifact, int maxAttempts) {
-        Instant now = Instant.now();
+        Instant now = now();
         return new StageRun(
                 UUID.randomUUID(), waveId, stage,
                 idempotencyKeyFor(waveId, stage),
@@ -125,7 +125,7 @@ public class StageRun {
     public void makeAvailable() {
         if (status == StageStatus.RETRYING || status == StageStatus.AWAITING_APPROVAL) {
             this.status = StageStatus.PENDING;
-            this.availableAt = Instant.now();
+            this.availableAt = now();
             this.updatedAt = this.availableAt;
         }
     }
@@ -160,6 +160,20 @@ public class StageRun {
             return;
         }
         fail(reason, 0);
+    }
+
+    /**
+     * Timestamps are truncated to milliseconds.
+     * <p>
+     * The claim predicate is {@code available_at <= now}. With microsecond
+     * precision, a stage enqueued and claimed within the same instant can have its
+     * {@code available_at} land microseconds <em>after</em> the claim's {@code now},
+     * so a freshly enqueued stage is intermittently invisible to the very next poll.
+     * That produced genuinely flaky tests. Truncating both sides to milliseconds
+     * makes "enqueued now, due now" reliably true.
+     */
+    public static Instant now() {
+        return Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
     }
 
     static Duration backoffFor(int attemptNumber) {
