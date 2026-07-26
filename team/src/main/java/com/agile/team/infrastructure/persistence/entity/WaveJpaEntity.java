@@ -36,6 +36,10 @@ public class WaveJpaEntity {
     @Column(name = "language", length = 50)
     private String language;
 
+    /** Cumulative model tokens consumed by this wave, for budget enforcement. */
+    @Column(name = "tokens_used", nullable = false)
+    private long tokensUsed;
+
     @OneToMany(mappedBy = "wave", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     private List<AgentMessageJpaEntity> messages = new ArrayList<>();
 
@@ -82,4 +86,6 @@ public class WaveJpaEntity {
     public void setJiraProjectKey(String jiraProjectKey) { this.jiraProjectKey = jiraProjectKey; }
     public String getLanguage() { return language; }
     public void setLanguage(String language) { this.language = language; }
+    public long getTokensUsed() { return tokensUsed; }
+    public void setTokensUsed(long tokensUsed) { this.tokensUsed = tokensUsed; }
 }

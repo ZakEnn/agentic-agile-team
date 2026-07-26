@@ -18,6 +18,12 @@ sdlc:
     # unbounded retry loop is how that becomes a bill.
     max-tokens-per-wave: ${MAX_TOKENS_PER_WAVE:1000000}
     max-stage-attempts: ${MAX_STAGE_ATTEMPTS:3}
+  worker:
+    poll-interval-ms: ${WORKER_POLL_INTERVAL_MS:2000}
+    batch-size: ${WORKER_BATCH_SIZE:5}
+    # How long a claim may be held before the owning instance is presumed dead and
+    # the stage is reclaimed. Must exceed the slowest realistic stage.
+    stale-claim-seconds: ${WORKER_STALE_CLAIM_SECONDS:600}
 
 management:
   endpoints:

@@ -57,16 +57,25 @@ team:
   skills:
     directory: skills
 
-# All gates auto-approve in tests so the full pipeline can be exercised
-# end-to-end without a human. Production defaults are REQUIRED (D-007).
+# Gates are REQUIRED in tests, matching the production default. Tests drive the
+# approval explicitly rather than having it happen implicitly — otherwise a test
+# asserting "nothing advances before the gate is decided" would silently pass for
+# the wrong reason. Tests that need auto-approval override this per-test.
 sdlc:
   gates:
     spec-approval:
-      mode: AUTO_APPROVE
+      mode: REQUIRED
     merge-approval:
-      mode: AUTO_APPROVE
+      mode: REQUIRED
     production-deploy:
-      mode: AUTO_APPROVE
+      mode: REQUIRED
   budget:
     max-tokens-per-wave: 500000
     max-stage-attempts: 3
+  worker:
+    # Effectively disables the background scheduler. Tests drive the queue by
+    # calling StageWorker.pollOnce() directly, so they exercise the real durable
+    # path deterministically instead of sleeping and hoping.
+    poll-interval-ms: 3600000
+    batch-size: 10
+    stale-claim-seconds: 600

@@ -1,8 +1,6 @@
 package com.agile.team.application.orchestrator;
 
-import com.agile.team.application.agent.AgentOutcome;
-import com.agile.team.application.agent.SpecAgent;
-import com.agile.team.application.gate.GatePolicy;
+import com.agile.team.application.orchestrator.handler.SpecStageHandler;
 import com.agile.team.domain.agent.Agent;
 import com.agile.team.domain.agent.AgentRepository;
 import com.agile.team.domain.agent.AgentRole;
@@ -16,28 +14,26 @@ import com.agile.team.domain.gate.GateName;
 import com.agile.team.domain.specification.Specification;
 import com.agile.team.domain.specification.SpecificationId;
 import com.agile.team.domain.stage.SdlcStage;
+import com.agile.team.domain.stage.StageRun;
+import com.agile.team.domain.stage.StageRunRepository;
 import com.agile.team.domain.wave.Wave;
 import com.agile.team.domain.wave.WaveContext;
 import com.agile.team.domain.wave.WaveId;
 import com.agile.team.domain.wave.WaveRepository;
+import com.agile.team.infrastructure.config.SdlcProperties;
+import com.agile.team.infrastructure.persistence.ArtifactCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Optional;
-
 /**
- * Drives a wave through the SDLC stages.
+ * The wave lifecycle API: start a wave, decide a gate, edit a draft.
  * <p>
- * <strong>M1 scope:</strong> the SPEC stage and the SPEC_APPROVAL gate. Execution is
- * synchronous — the caller waits for the spec to be drafted. That is a deliberate
- * intermediate state (DECISIONS.md D-010): M3 replaces it with the durable,
- * DB-backed stage machine from SDLC_AGENT_PLAN.md §3.3, at which point stages
- * become resumable and multi-instance safe. Doing it synchronously first keeps M1
- * deterministic and testable rather than layering agents on top of the in-JVM
- * {@code @Async} event bus the plan identified as the actual defect.
+ * As of M3 this no longer executes anything. It creates the wave and <em>enqueues</em>
+ * the first stage; {@link StageWorker} claims and runs it. That separation is the
+ * point of the durable machine — the caller no longer blocks on a model call, and a
+ * restart mid-wave resumes from the queue rather than losing the work.
  */
 @Service
 public class Orchestrator {
@@ -47,113 +43,75 @@ public class Orchestrator {
     private final WaveRepository waveRepository;
     private final AgentRepository agentRepository;
     private final ConversationRepository conversationRepository;
-    private final SpecAgent specAgent;
-    private final GatePolicy gatePolicy;
+    private final StageRunRepository stageRuns;
+    private final ArtifactCodec codec;
+    private final SdlcProperties properties;
 
     public Orchestrator(WaveRepository waveRepository,
                         AgentRepository agentRepository,
                         ConversationRepository conversationRepository,
-                        SpecAgent specAgent,
-                        GatePolicy gatePolicy) {
+                        StageRunRepository stageRuns,
+                        ArtifactCodec codec,
+                        SdlcProperties properties) {
         this.waveRepository = waveRepository;
         this.agentRepository = agentRepository;
         this.conversationRepository = conversationRepository;
-        this.specAgent = specAgent;
-        this.gatePolicy = gatePolicy;
+        this.stageRuns = stageRuns;
+        this.codec = codec;
+        this.properties = properties;
     }
 
-    /**
-     * Start a wave: create it, run the SPEC stage, and either park at the approval
-     * gate or auto-approve according to policy.
-     */
+    /** Create a wave and enqueue its SPEC stage. Returns immediately. */
     @Transactional
     public WaveId startWave(StartWaveCommand command) {
         Wave wave = new Wave(WaveId.generate(), command.waveName(), command.context());
         waveRepository.save(wave);
 
-        MDC.put("waveId", wave.getId().value().toString());
-        try {
-            ConversationHistory history = ConversationHistory.startForWave(wave.getId());
-            Agent poAgent = requireAgent(AgentRole.PO);
+        ConversationHistory history = ConversationHistory.startForWave(wave.getId());
+        record(history, AgentRole.PO, MessageType.SPECIFICATION_REQUEST,
+                "Wave started: " + command.taskDescription());
+        conversationRepository.save(history);
 
-            record(history, poAgent, MessageType.STAGE_STARTED,
-                    "[SPEC] Drafting specification for: " + command.taskDescription());
+        stageRuns.save(StageRun.enqueue(
+                wave.getId(),
+                SdlcStage.SPEC,
+                codec.write(new SpecStageHandler.SpecStageInput(
+                        command.taskDescription(), command.keyword())),
+                properties.getBudget().getMaxStageAttempts()));
 
-            AgentOutcome<SpecDraft> outcome;
-            try {
-                outcome = specAgent.run(new SpecAgent.SpecAgentRequest(
-                        wave.getId().value().toString(),
-                        command.taskDescription(),
-                        command.keyword(),
-                        command.context()));
-            } catch (RuntimeException e) {
-                log.error("[SPEC] stage failed for wave={}: {}", wave.getId().value(), e.getMessage());
-                record(history, poAgent, MessageType.STAGE_FAILED,
-                        "[SPEC] Failed: " + e.getMessage());
-                conversationRepository.save(history);
-                wave.fail("SPEC_AGENT");
-                waveRepository.save(wave);
-                throw e;
-            }
-
-            outcome.notes().forEach(note ->
-                    record(history, poAgent, MessageType.AGENT_NOTE, "[SPEC] " + note));
-
-            Specification specification = Specification.fromDraft(
-                    SpecificationId.generate(),
-                    outcome.artifact(),
-                    describeSource(command));
-            wave.addSpecification(specification);
-
-            record(history, poAgent, MessageType.STAGE_COMPLETED,
-                    "[SPEC] Draft ready (%d acceptance criteria, %d tokens)".formatted(
-                            outcome.artifact().acceptanceCriteria().size(),
-                            outcome.usage().total()));
-
-            applySpecGate(wave, specification, history, poAgent);
-
-            waveRepository.save(wave);
-            conversationRepository.save(history);
-            return wave.getId();
-        } finally {
-            MDC.remove("waveId");
-        }
+        log.info("Wave {} created and SPEC stage enqueued", wave.getId().value());
+        return wave.getId();
     }
 
     /**
-     * Record a human decision at the SPEC_APPROVAL gate.
-     * <p>
-     * This is the endpoint the original system was missing entirely: it logged
-     * "awaiting manual validation" with no mechanism to supply that validation, so
-     * the only way to advance was to uncomment code and redeploy.
+     * Record a human decision at the SPEC_APPROVAL gate and, on approval, release the
+     * pipeline into the next stage.
      */
     @Transactional
     public Wave decideSpecification(WaveId waveId, SpecificationId specificationId, GateDecision decision) {
-        Wave wave = waveRepository.findById(waveId)
-                .orElseThrow(() -> new IllegalArgumentException("Wave not found: " + waveId.value()));
+        Wave wave = requireWave(waveId);
         Specification specification = wave.findSpecification(specificationId)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Specification " + specificationId.value() + " not found on wave " + waveId.value()));
 
         ConversationHistory history = conversationRepository.findByWaveId(waveId)
-                .orElse(ConversationHistory.startForWave(waveId));
-        Agent poAgent = requireAgent(AgentRole.PO);
+                .orElseGet(() -> ConversationHistory.startForWave(waveId));
 
         specification.applyDecision(decision);
 
-        record(history, poAgent, MessageType.GATE_DECISION,
+        record(history, AgentRole.PO, MessageType.GATE_DECISION,
                 "[SPEC_APPROVAL] %s by %s: %s".formatted(
                         decision.approved() ? "APPROVED" : "REJECTED",
-                        decision.decidedBy(),
-                        decision.reason()));
+                        decision.decidedBy(), decision.reason()));
 
         if (decision.approved()) {
             wave.startExecution(decision.decidedBy());
-            record(history, poAgent, MessageType.WAVE_STATUS_UPDATE,
+            record(history, AgentRole.PO, MessageType.WAVE_STATUS_UPDATE,
                     "Wave moved to IN_PROGRESS, authorized by " + decision.decidedBy());
+            enqueueNextAfterSpec(wave, specification);
         } else {
             wave.fail(decision.decidedBy());
-            record(history, poAgent, MessageType.WAVE_STATUS_UPDATE,
+            record(history, AgentRole.PO, MessageType.WAVE_STATUS_UPDATE,
                     "Wave FAILED at SPEC_APPROVAL: " + decision.reason());
         }
 
@@ -162,12 +120,11 @@ public class Orchestrator {
         return wave;
     }
 
-    /** Apply a human edit to a draft specification, before any decision is made. */
+    /** Apply a human edit to a draft, before any decision has been recorded. */
     @Transactional
     public Wave editSpecification(WaveId waveId, SpecificationId specificationId,
                                   SpecDraft edited, String editedBy) {
-        Wave wave = waveRepository.findById(waveId)
-                .orElseThrow(() -> new IllegalArgumentException("Wave not found: " + waveId.value()));
+        Wave wave = requireWave(waveId);
         Specification specification = wave.findSpecification(specificationId)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Specification " + specificationId.value() + " not found on wave " + waveId.value()));
@@ -175,60 +132,45 @@ public class Orchestrator {
         specification.applyEdit(edited, editedBy);
 
         ConversationHistory history = conversationRepository.findByWaveId(waveId)
-                .orElse(ConversationHistory.startForWave(waveId));
-        record(history, requireAgent(AgentRole.PO), MessageType.AGENT_NOTE,
-                "[SPEC] Draft edited by " + editedBy);
+                .orElseGet(() -> ConversationHistory.startForWave(waveId));
+        record(history, AgentRole.PO, MessageType.AGENT_NOTE, "[SPEC] Draft edited by " + editedBy);
 
         waveRepository.save(wave);
         conversationRepository.save(history);
         return wave;
     }
 
-    private void applySpecGate(Wave wave, Specification specification,
-                               ConversationHistory history, Agent poAgent) {
-        Optional<GateDecision> auto = gatePolicy.tryAutoResolve(GateName.SPEC_APPROVAL);
-        if (auto.isEmpty()) {
-            record(history, poAgent, MessageType.AWAITING_APPROVAL,
-                    "[SPEC_APPROVAL] Awaiting human decision. "
-                            + "POST /api/waves/" + wave.getId().value()
-                            + "/specifications/" + specification.getId().value() + "/approve");
+    private void enqueueNextAfterSpec(Wave wave, Specification specification) {
+        SdlcStage next = SdlcStage.SPEC.next();
+        if (next == null) {
             return;
         }
-
-        GateDecision decision = auto.get();
-        specification.applyDecision(decision);
-        record(history, poAgent, MessageType.GATE_DECISION,
-                "[SPEC_APPROVAL] %s by %s".formatted(
-                        decision.approved() ? "APPROVED" : "REJECTED", decision.decidedBy()));
-        if (decision.approved()) {
-            wave.startExecution(decision.decidedBy());
+        if (stageRuns.findByWaveAndStage(wave.getId(), next).isPresent()) {
+            log.debug("Stage {} already enqueued for wave {}", next, wave.getId().value());
+            return;
         }
+        stageRuns.save(StageRun.enqueue(wave.getId(), next,
+                codec.write(specification.toDraft()),
+                properties.getBudget().getMaxStageAttempts()));
+        log.info("Wave {} approved at SPEC_APPROVAL; {} enqueued", wave.getId().value(), next);
     }
 
-    private String describeSource(StartWaveCommand command) {
-        if (command.context().hasConfluenceSpace() && command.keyword() != null) {
-            return command.context().confluenceSpaceKey() + ":" + command.keyword();
-        }
-        return "intent-only";
+    private Wave requireWave(WaveId waveId) {
+        return waveRepository.findById(waveId)
+                .orElseThrow(() -> new IllegalArgumentException("Wave not found: " + waveId.value()));
     }
 
-    private Agent requireAgent(AgentRole role) {
-        return agentRepository.findByRole(role).stream()
-                .findFirst()
+    private void record(ConversationHistory history, AgentRole role, MessageType type, String payload) {
+        Agent agent = agentRepository.findByRole(role).stream().findFirst()
                 .orElseThrow(() -> new IllegalStateException("No " + role + " agent registered"));
-    }
-
-    private void record(ConversationHistory history, Agent agent, MessageType type, String payload) {
         history.record(AgentMessage.create(agent.getId(), agent.getId(), type, payload));
     }
 
     /**
-     * Everything needed to start a wave.
-     *
      * @param waveName        human label
      * @param taskDescription the intent
      * @param keyword         Confluence search term; optional
-     * @param context         per-wave targeting, replacing the old hardcoded constants
+     * @param context         per-wave targeting
      */
     public record StartWaveCommand(
             String waveName,

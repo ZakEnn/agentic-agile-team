@@ -77,4 +77,18 @@ public class ScriptedLlmGateway implements LlmGateway {
     public int callCount() {
         return requests.size();
     }
+
+    /**
+     * Clear queued responses, failures and recorded requests.
+     * <p>
+     * Needed because Spring caches the application context across tests, so a single
+     * gateway instance is shared by every test in a class. Without an explicit reset,
+     * one test's leftover queue would silently satisfy the next.
+     */
+    public void reset() {
+        responses.clear();
+        failures.clear();
+        requests.clear();
+        usagePerCall = TokenUsage.of(100, 50);
+    }
 }

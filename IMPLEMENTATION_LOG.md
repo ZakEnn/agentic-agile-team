@@ -288,3 +288,98 @@ A defect that produces nulls instead of exceptions is invisible without a test.
   (`Finding` is countable by severity), but the corpus needs real reviewed MRs from
   the team.
 - `JiraPort.updateIssueStatus` unimplemented (see above).
+
+---
+
+## M3 — Durable orchestration
+
+**Status: COMPLETE** · 179 unit/slice tests + 4 MySQL integration tests green · commit `feat(m3)`
+
+### What I built
+
+**A stage queue in the database** (`V1.6.0`). `stage_run` carries wave, stage,
+status, attempt, `max_attempts`, idempotency key, input/output artifact JSON,
+`tokens_used`, `available_at` for backoff, and `claimed_by`/`claimed_at`. Claimed
+with `SELECT … FOR UPDATE SKIP LOCKED` followed by a conditional
+`UPDATE … WHERE status = 'PENDING'`.
+
+Both steps are deliberate: the **conditional UPDATE is the correctness guarantee**
+(it succeeds for exactly one caller per row), and **SKIP LOCKED is the contention
+optimisation**. Keeping both means the claim stays correct on a database that
+ignores the locking hint — and the adapter degrades to a plain select, once and
+loudly, if the hint is rejected.
+
+**Instance identity from `CF_INSTANCE_GUID`**, not `CF_INSTANCE_INDEX` — an index
+can be reused after a restage, which would make an abandoned claim
+indistinguishable from a live one.
+
+**Bounded retry, backoff, dead-letter.** Exponential backoff from 5s, capped at 10
+minutes; attempts capped by config; exhaustion lands in `DEAD_LETTER` and fails the
+wave. Tokens spent on failed attempts still count toward the budget.
+
+**Crash recovery.** A `RUNNING` row whose owner disappeared is reclaimed after
+`stale-claim-seconds` — returned to `PENDING` if attempts remain, dead-lettered if
+not. This is the property the in-JVM event bus could not provide at all.
+
+**Budget enforcement.** `waves.tokens_used` is checked before each stage; exceeding
+`max-tokens-per-wave` stops the wave with `BUDGET_EXCEEDED` rather than discovering
+the cost on an invoice.
+
+**`StageHandler` registry.** One bean per stage; the executor dispatches by enum.
+A stage with **no** handler is an explicit stop with a recorded reason — never a
+silent skip, because a silent skip would let a wave "complete" without ever being
+built or tested. DESIGN/BUILD/VERIFY/RELEASE currently have no handler, and the
+tests assert that they can never report success.
+
+**`Orchestrator` no longer executes anything.** It creates the wave and enqueues
+SPEC; `StageWorker` claims and runs it. The HTTP caller no longer blocks on a model
+call. `StageWorker.pollOnce()` is public so tests drive the real durable path
+deterministically instead of sleeping.
+
+### Two real bugs found by tests, not by reading
+
+- **Stale-read after a native UPDATE.** `claimDueStages` claimed the row, then
+  re-read it via `findById` and got the *cached* entity — still `PENDING`, still
+  `claimed_by = null`. The claim looked successful and returned stale state. Fixed
+  with `@Modifying(flushAutomatically = true, clearAutomatically = true)` on every
+  bulk query. This is the kind of defect that only surfaces under a test that
+  asserts on the value it reads back.
+- **Genuinely flaky tests.** Two integration tests failed intermittently across
+  repeated runs. Cause: Spring caches one context across test classes, so the H2
+  database is shared and leftover `PENDING` rows from another class were claimable.
+  Fixed by resetting the queue in `@BeforeEach` in both classes and scoping
+  assertions to the wave under test. I ran the suite three consecutive times to
+  confirm the fix rather than assuming it.
+
+### Decisions made and why
+
+- **Implemented exactly the approach SDLC_AGENT_PLAN.md §3.3 justified** — DB-backed
+  stage machine, no A2A between in-process agents, no Temporal yet. No protocol
+  substitution (execution rule 5).
+- **Test gates changed from `AUTO_APPROVE` to `REQUIRED`** in the test profile.
+  With auto-approval a test asserting "nothing advances before the gate is decided"
+  passes for the wrong reason. Tests now drive approval explicitly.
+- **Tier-3 tests tagged `integration` and excluded by default** via surefire
+  `excludedGroups`, so `mvn verify` stays green with no Docker. CI opts in.
+
+### What I verified
+
+- **179 tests green, three consecutive runs**, no flakiness.
+- **4 Testcontainers MySQL tests green** against `mysql:8.4`: the full V1.0.0→V1.6.0
+  migration chain applies; `FOR UPDATE SKIP LOCKED` is accepted by real MySQL (no
+  fallback); **4 concurrent instances claiming 24 stages produce disjoint sets**;
+  duplicate enqueue for the same (wave, stage) is rejected by the unique constraint.
+- Restart/crash recovery proven: a stage claimed by a dead instance is reclaimed and
+  completes.
+- Retry proven: fail → RETRYING → backoff → succeed on attempt 2.
+- Dead-letter proven: three failures → DEAD_LETTER → wave FAILED.
+- Budget proven: a 600k-token stage against a 500k cap stops the next stage.
+
+### What is still open
+
+- The worker polls on a fixed delay. Fine at this scale; a notification mechanism
+  would reduce latency if wave volume grows.
+- No outbox table. The plan mentioned one alongside the queue; the stage queue with
+  idempotency keys covers the same need here (stage transitions are the only events),
+  so a separate outbox would be ceremony without a consumer. Revisit if external
+  systems need to subscribe to wave events.

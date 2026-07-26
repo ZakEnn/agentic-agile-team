@@ -1,0 +1,61 @@
+# Tier-3 integration profile: real MySQL via Testcontainers.
+#
+# The datasource is supplied by @ServiceConnection from the container, so no URL
+# is configured here. Flyway is ON: verifying the real migration chain against real
+# MySQL is the whole point of this tier.
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        type:
+          preferred_uuid_jdbc_type: CHAR
+  flyway:
+    enabled: true
+  ai:
+    anthropic:
+      api-key: test-key-never-used
+    mcp:
+      client:
+        enabled: false
+
+confluence:
+  base-url: http://confluence.invalid
+  access-token: test-token
+
+gitlab:
+  base-url: http://gitlab.invalid
+  token: ""
+
+jira:
+  base-url: https://jira.invalid
+  email: ""
+  api-token: ""
+
+sonarqube:
+  base-url: https://sonarqube.invalid
+  token: ""
+
+team:
+  skills:
+    directory: skills
+
+sdlc:
+  gates:
+    spec-approval:
+      mode: REQUIRED
+    merge-approval:
+      mode: REQUIRED
+    production-deploy:
+      mode: REQUIRED
+  budget:
+    max-tokens-per-wave: 500000
+    max-stage-attempts: 3
+  worker:
+    # Scheduler effectively disabled; the test drives claims directly.
+    poll-interval-ms: 3600000
+    batch-size: 10
+    stale-claim-seconds: 600

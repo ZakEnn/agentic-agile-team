@@ -23,6 +23,14 @@ public class Wave {
     /** Which Confluence space / GitLab project / Jira project this wave targets. */
     private WaveContext context;
 
+    /**
+     * Cumulative model tokens consumed by every agent on this wave.
+     * <p>
+     * Tracked on the aggregate so the budget ceiling is enforceable before a stage
+     * runs, rather than discovered afterwards on an invoice.
+     */
+    private long tokensUsed;
+
     public Wave(WaveId id, String name) {
         this(id, name, WaveContext.forSpecOnly(null, null));
     }
@@ -148,4 +156,16 @@ public class Wave {
     public List<StateTransition> getTransitions() { return Collections.unmodifiableList(transitions); }
     public Instant getCreatedAt() { return createdAt; }
     public WaveContext getContext() { return context; }
+    public long getTokensUsed() { return tokensUsed; }
+
+    public void addTokensUsed(long tokens) {
+        if (tokens > 0) {
+            this.tokensUsed += tokens;
+        }
+    }
+
+    /** Used when reconstructing from persistence. */
+    public void restoreTokensUsed(long tokens) {
+        this.tokensUsed = Math.max(0, tokens);
+    }
 }

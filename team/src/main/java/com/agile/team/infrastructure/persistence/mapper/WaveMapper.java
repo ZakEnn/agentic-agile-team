@@ -55,6 +55,7 @@ public class WaveMapper {
             entity.setJiraProjectKey(context.jiraProjectKey());
             entity.setLanguage(context.language());
         }
+        entity.setTokensUsed(wave.getTokensUsed());
 
         entity.setTransitions(
                 wave.getTransitions().stream()
@@ -151,7 +152,7 @@ public class WaveMapper {
                 entity.getLanguage()
         );
 
-        return new Wave(
+        Wave wave = new Wave(
                 WaveId.of(entity.getId()),
                 entity.getName(),
                 WaveStatus.valueOf(entity.getStatus()),
@@ -161,6 +162,8 @@ public class WaveMapper {
                 entity.getCreatedAt(),
                 context
         );
+        wave.restoreTokensUsed(entity.getTokensUsed());
+        return wave;
     }
 
     /**

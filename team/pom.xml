@@ -29,6 +29,8 @@
 	<properties>
 		<java.version>17</java.version>
 		<spring-ai.version>2.0.0</spring-ai.version>
+		<!-- Overridden to empty by -Dgroups=integration in the CI integration step. -->
+		<excludedTestGroups>integration</excludedTestGroups>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -105,6 +107,13 @@
 			<artifactId>junit-jupiter</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<!-- Supplies @ServiceConnection, which wires the container's JDBC URL into
+		     the test context so the integration profile needs no hardcoded datasource. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
 		<!-- Test-tier 2 (DECISIONS.md D-005): JPA slices on H2, no Docker required. -->
 		<dependency>
 			<groupId>com.h2database</groupId>
@@ -143,6 +152,18 @@
 							<artifactId>lombok</artifactId>
 						</exclude>
 					</excludes>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<!--
+					  Tier 3 of the test strategy (DECISIONS.md D-005) needs Docker, so it is
+					  excluded from the default run to keep `mvn verify` green on a clean
+					  checkout. Opt in with: mvn verify -Dgroups=integration
+					-->
+					<excludedGroups>${excludedTestGroups}</excludedGroups>
 				</configuration>
 			</plugin>
 			<plugin>

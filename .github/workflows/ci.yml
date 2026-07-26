@@ -28,11 +28,12 @@ jobs:
         working-directory: team
         run: mvn -B verify
 
-      # Tier 3 runs only where Docker is available. Tagged tests are excluded from
-      # the main run and opted into here.
+      # Tier 3 needs Docker, so it is excluded from the main run by the surefire
+      # excludedGroups default and opted into here. This is what verifies the
+      # MySQL-specific SQL — the Flyway chain and FOR UPDATE SKIP LOCKED.
       - name: Integration tests (Testcontainers MySQL)
         working-directory: team
-        run: mvn -B verify -Dgroups=integration -DfailIfNoTests=false
+        run: mvn -B verify -Dgroups=integration -DexcludedTestGroups= -DfailIfNoTests=false
 
   secret-scan:
     name: Secret scan

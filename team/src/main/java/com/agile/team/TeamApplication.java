@@ -7,6 +7,8 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 
 @SpringBootApplication
 @EnableConfigurationProperties(SdlcProperties.class)
+// Drives StageWorker, which polls the durable stage queue.
+@org.springframework.scheduling.annotation.EnableScheduling
 public class TeamApplication {
 
 	public static void main(String[] args) {
