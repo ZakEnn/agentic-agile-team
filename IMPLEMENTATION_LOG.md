@@ -485,3 +485,78 @@ one cycle. Verified with three consecutive full-suite runs.
   perform. The pipeline is not yet continuous from spec to review.
 - No MR is opened yet: `Implementation.mergeRequestIid` is populated only once the
   Developer stage is pointed at a real repository with a real branch.
+
+---
+
+## M5 — Architect and Release agents; the pipeline closes
+
+**Status: COMPLETE** · 234 tests + 4 MySQL integration tests green · commit `feat(m5)`
+
+### What I built
+
+**`ArchitectAgent` + `DesignStageHandler`.** Produces a `DesignNote` whose
+`impactedModules` are **checked against the real repository tree** before the design
+is accepted. A module the repository does not contain fails the stage with the
+offending names in the message. This is the cheapest possible moment to catch a
+hallucinated path — the alternative is a build failure two stages later with no
+obvious cause. Verification is required by default;
+`sdlc.design.require-module-verification=false` is the explicit, documented escape
+hatch, and it degrades to a loud `UNVERIFIED` note rather than silence.
+
+**`ReleaseAgent` + `DeploymentPolicy` + `CommandDeploymentAdapter`.**
+
+The Release agent **uses no language model at all**, and that is a deliberate
+design decision rather than an omission. Every input to a deployment decision is a
+fact: is the environment allowed, is it frozen, are we inside the window, what
+version is running. There is nothing for a model to judge, and adding one would
+insert non-determinism into the single most irreversible step in the pipeline.
+
+Guardrails are policy-as-code and every check **fails closed**: an unlisted
+environment is refused rather than permitted, frozen environments are blocked, and
+production deploys are blocked at weekends and outside the configured window
+(staging deliberately is not — a window that blocks staging at 20:00 is ceremony).
+The rollback reference is captured **before** the new version goes out; capturing it
+afterwards would record the version you are trying to escape from. A successful
+`DeployVerdict` cannot be constructed without one.
+
+**`ReviewStageHandler`** wires the M2 Reviewer into the durable machine and applies
+`ReviewGate` with real inputs on both sides at last — a disposition computed from
+classified findings, and a SonarQube result that fails closed when unknown. It also
+validates the governance skill's integrity before judging anything with it and
+records which skill version produced the verdict.
+
+**All six stages now have handlers.** SPEC → DESIGN → BUILD → VERIFY → REVIEW →
+RELEASE. There is a test that asserts this, so a stage losing its handler is a
+deliberate decision rather than an accident.
+
+### The handoff bug the tests caught
+
+Adding DESIGN broke BUILD: DESIGN emits a `DesignStageOutput{spec, design}` and
+BUILD was still reading a bare `SpecDraft`, so every build failed with "Stored
+artifact could not be read as SpecDraft". The `ArtifactCodec` refusing to
+silently return null on a shape mismatch is what made this a one-line diagnosis
+instead of a confusing null-pointer three frames later. BUILD now reads the design
+output, falls back to the wave's approved spec, and passes the verified modules and
+risks into the developer prompt.
+
+### What I verified
+
+- **234 tests green over three consecutive runs**, plus the 4 MySQL integration
+  tests still green.
+- End to end through the durable machine: an approved spec flows through DESIGN,
+  BUILD and VERIFY to SUCCEEDED.
+- A design naming a non-existent module fails DESIGN and **never reaches BUILD**.
+- 17 new Architect/Release tests including weekend and window blocking, frozen
+  environments, refusal never touching the platform, and rollback-before-deploy
+  ordering.
+
+### What is still open
+
+- **A2A remains correctly deferred.** SDLC_AGENT_PLAN.md §3.3 justified adopting it
+  at exactly one boundary — an externalised Developer agent — and that boundary does
+  not exist yet. Nothing here changes that analysis. The artifact-based handoffs are
+  the property that makes it a later transport swap rather than a redesign.
+- RELEASE deploys to the pre-production environment and the PRODUCTION_DEPLOY gate
+  decides what happens next. Promotion beyond that is a human action by design.
+- `CommandDeploymentAdapter` needs a real deploy command configured. Unconfigured,
+  it **refuses** rather than reporting a deployment that did not happen.

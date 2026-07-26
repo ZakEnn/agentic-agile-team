@@ -3,6 +3,7 @@ package com.agile.team.application.orchestrator.handler;
 import com.agile.team.application.agent.AgentOutcome;
 import com.agile.team.application.agent.DeveloperAgent;
 import com.agile.team.application.orchestrator.StageHandler;
+import com.agile.team.domain.artifact.DesignNote;
 import com.agile.team.domain.artifact.Implementation;
 import com.agile.team.domain.artifact.SpecDraft;
 import com.agile.team.domain.specification.Specification;
@@ -47,7 +48,10 @@ public class BuildStageHandler implements StageHandler {
 
     @Override
     public StageOutcome handle(StageRun run, Wave wave) {
-        SpecDraft spec = resolveSpec(run, wave);
+        DesignStageHandler.DesignStageOutput design = readDesign(run);
+        SpecDraft spec = design != null && design.spec() != null
+                ? design.spec()
+                : resolveSpec(run, wave);
         String workspaceId = codeExecutor.prepareWorkspace(wave.getId().value().toString());
 
         AgentOutcome<Implementation> outcome;
@@ -55,7 +59,7 @@ public class BuildStageHandler implements StageHandler {
             outcome = developerAgent.run(new DeveloperAgent.DeveloperRequest(
                     wave.getId().value().toString(),
                     spec,
-                    readDesignNote(run),
+                    describeDesign(design),
                     branchNameFor(wave, spec),
                     run.getErrorMessage(),
                     workspaceId));
@@ -83,10 +87,27 @@ public class BuildStageHandler implements StageHandler {
                 outcome.usage(), notes);
     }
 
+    /**
+     * The normal input is the DESIGN stage's output. Reading it defensively, rather
+     * than assuming it, keeps the stage runnable when BUILD is enqueued directly —
+     * which is how a retry of a partially-migrated wave behaves.
+     */
+    private DesignStageHandler.DesignStageOutput readDesign(StageRun run) {
+        try {
+            return codec.read(run.getInputArtifact(), DesignStageHandler.DesignStageOutput.class);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     private SpecDraft resolveSpec(StageRun run, Wave wave) {
-        SpecDraft fromArtifact = codec.read(run.getInputArtifact(), SpecDraft.class);
-        if (fromArtifact != null) {
-            return fromArtifact;
+        try {
+            SpecDraft fromArtifact = codec.read(run.getInputArtifact(), SpecDraft.class);
+            if (fromArtifact != null) {
+                return fromArtifact;
+            }
+        } catch (RuntimeException ignored) {
+            // Input artifact is some other shape; fall back to the wave.
         }
         return wave.getSpecifications().stream()
                 .filter(Specification::isApproved)
@@ -94,13 +115,26 @@ public class BuildStageHandler implements StageHandler {
                 .map(Specification::toDraft)
                 .orElseThrow(() -> new IllegalStateException(
                         "BUILD stage has no specification: the wave has no approved spec "
-                                + "and the stage carries no input artifact"));
+                                + "and the stage carries no usable input artifact"));
     }
 
-    private String readDesignNote(StageRun run) {
-        // The Architect agent lands in M5. Until then the design note is absent, and
-        // the prompt says so explicitly rather than leaving a gap the model fills in.
-        return null;
+    /** Render the design for the developer prompt, or say plainly that there is none. */
+    private String describeDesign(DesignStageHandler.DesignStageOutput design) {
+        if (design == null || design.design() == null) {
+            return null;
+        }
+        DesignNote note = design.design();
+        StringBuilder sb = new StringBuilder(note.approach()).append('\n');
+        sb.append("\nImpacted modules (verified against the repository):\n");
+        note.impactedModules().forEach(m -> sb.append("  - ").append(m).append('\n'));
+        if (!note.risks().isEmpty()) {
+            sb.append("\nRisks to keep in mind:\n");
+            note.risks().forEach(r -> sb.append("  - ").append(r).append('\n'));
+        }
+        if (note.testStrategy() != null && !note.testStrategy().isBlank()) {
+            sb.append("\nTest strategy: ").append(note.testStrategy()).append('\n');
+        }
+        return sb.toString();
     }
 
     private String branchNameFor(Wave wave, SpecDraft spec) {

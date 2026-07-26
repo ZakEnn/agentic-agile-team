@@ -15,6 +15,13 @@ public interface GitLabPort {
      */
     Optional<MergeRequestSnapshot> fetchMergeRequest(String projectId, String mergeRequestIid);
 
+    /**
+     * List file paths in the repository, used to verify that an Architect agent's
+     * impacted modules actually exist. Returns empty when the repository cannot be
+     * read — callers decide whether that is fatal.
+     */
+    java.util.List<String> listRepositoryPaths(String projectId, String ref);
+
     String createBranch(String projectId, String branchName, String sourceBranch);
 
     String createMergeRequest(String projectId, String sourceBranch, String targetBranch, String title, String description);

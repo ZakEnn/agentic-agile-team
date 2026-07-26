@@ -23,11 +23,22 @@ public final class StubToolchainPorts {
     public static class Git implements GitLabPort {
         private MergeRequestSnapshot snapshot;
         private RuntimeException failure;
+        private List<String> repositoryPaths = List.of();
         public final List<String> postedComments = new ArrayList<>();
 
         public Git returning(MergeRequestSnapshot snapshot) {
             this.snapshot = snapshot;
             return this;
+        }
+
+        public Git withRepositoryPaths(List<String> paths) {
+            this.repositoryPaths = List.copyOf(paths);
+            return this;
+        }
+
+        @Override
+        public List<String> listRepositoryPaths(String projectId, String ref) {
+            return repositoryPaths;
         }
 
         public Git failingWith(RuntimeException e) {

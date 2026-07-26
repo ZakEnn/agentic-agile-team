@@ -73,7 +73,16 @@ public class VerifyStageHandler implements StageHandler {
         }
 
         notes.add("All %d acceptance criteria verified".formatted(verdict.perCriterion().size()));
-        return StageOutcome.completed(codec.write(verdict), outcome.usage(), notes);
+        // The implementation travels on so REVIEW knows which merge request to review.
+        return StageOutcome.completed(
+                codec.write(new VerifyStageOutput(verdict, build.implementation())),
+                outcome.usage(), notes);
+    }
+
+    /** What VERIFY hands to REVIEW. */
+    public record VerifyStageOutput(
+            QaVerdict verdict,
+            com.agile.team.domain.artifact.Implementation implementation) {
     }
 
     private String describeFailure(QaVerdict verdict) {

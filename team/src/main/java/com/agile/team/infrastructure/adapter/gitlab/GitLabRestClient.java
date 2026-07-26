@@ -91,6 +91,40 @@ public class GitLabRestClient implements GitLabPort {
     }
 
     @Override
+    public List<String> listRepositoryPaths(String projectId, String ref) {
+        if (!properties.isConfigured()) {
+            log.warn("GitLab is not configured; cannot list repository paths for {}", projectId);
+            return List.of();
+        }
+        try {
+            List<RepositoryTreeEntry> entries = restClient.get()
+                    .uri(uri -> uri.path("/api/v4/projects/{project}/repository/tree")
+                            .queryParam("recursive", true)
+                            .queryParam("per_page", 100)
+                            .queryParam("ref", ref != null ? ref : "main")
+                            .build(encodeProjectId(projectId)))
+                    .retrieve()
+                    .body(new org.springframework.core.ParameterizedTypeReference<List<RepositoryTreeEntry>>() {});
+
+            return entries == null ? List.of()
+                    : entries.stream().map(RepositoryTreeEntry::path).filter(java.util.Objects::nonNull).toList();
+        } catch (Exception e) {
+            // Returning empty rather than throwing: the caller decides whether an
+            // unverifiable design is fatal, and that policy lives in configuration.
+            log.warn("GitLab: could not list repository tree for {} ({})", projectId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    record RepositoryTreeEntry(
+            @com.fasterxml.jackson.annotation.JsonProperty("id") String id,
+            @com.fasterxml.jackson.annotation.JsonProperty("name") String name,
+            @com.fasterxml.jackson.annotation.JsonProperty("type") String type,
+            @com.fasterxml.jackson.annotation.JsonProperty("path") String path
+    ) {
+    }
+
+    @Override
     public String createBranch(String projectId, String branchName, String sourceBranch) {
         restClient.post()
                 .uri(uri -> uri.path("/api/v4/projects/{project}/repository/branches")

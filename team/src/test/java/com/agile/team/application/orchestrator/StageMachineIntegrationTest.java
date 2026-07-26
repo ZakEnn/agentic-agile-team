@@ -53,6 +53,20 @@ class StageMachineIntegrationTest {
         com.agile.team.support.ScriptedCodeExecutor scriptedCodeExecutor() {
             return new com.agile.team.support.ScriptedCodeExecutor();
         }
+
+        /**
+         * A GitLab port with a known repository listing, so the Architect stage's
+         * module verification runs for real rather than being switched off.
+         */
+        @Bean
+        @Primary
+        com.agile.team.support.StubToolchainPorts.Git stubGitLab() {
+            return new com.agile.team.support.StubToolchainPorts.Git()
+                    .withRepositoryPaths(List.of(
+                            "src/main/java/SftpPoller.java",
+                            "src/test/java/SftpPollerTest.java",
+                            "pom.xml"));
+        }
     }
 
     private static final SpecDraft DRAFT = new SpecDraft(
@@ -80,9 +94,14 @@ class StageMachineIntegrationTest {
 
     @Autowired com.agile.team.support.ScriptedCodeExecutor codeExecutor;
     @Autowired com.agile.team.infrastructure.persistence.ArtifactCodec codec;
+    @Autowired List<StageHandler> stageHandlers;
+
+    private java.util.Set<SdlcStage> registeredStages;
 
     @BeforeEach
     void setUp() {
+        registeredStages = stageHandlers.stream()
+                .map(StageHandler::stage).collect(java.util.stream.Collectors.toSet());
         llm.reset();
         codeExecutor.reset();
         // Order matters: stage_run and conversations reference waves.
@@ -136,20 +155,14 @@ class StageMachineIntegrationTest {
     }
 
     @Test
-    void shouldNeverReportSuccessForAStageWithNoHandler() {
-        // DESIGN has no handler until M5. The machine must stop honestly rather than
-        // let a wave "complete" without ever being designed, built or tested.
-        llm.respondWith(DRAFT);
-        waveId = start();
-        worker.pollOnce();
-        approveSpec();
-
-        worker.drain(3);
-
-        StageRun design = stageRuns.findByWaveAndStage(waveId, SdlcStage.DESIGN).orElseThrow();
-        assertNotEquals(StageStatus.SUCCEEDED, design.getStatus());
-        assertTrue(conversationPayloads().stream()
-                .anyMatch(p -> p.contains("No handler registered for stage DESIGN")));
+    void everyStageInThePipelineHasAHandler() {
+        // As of M5 all six stages are staffed. If a stage ever loses its handler the
+        // executor stops the wave honestly rather than skipping — this test is what
+        // makes that a deliberate decision rather than an accident.
+        for (SdlcStage stage : SdlcStage.values()) {
+            assertTrue(registeredStages.contains(stage),
+                    "no handler registered for stage " + stage);
+        }
     }
 
     @Test
@@ -305,25 +318,25 @@ class StageMachineIntegrationTest {
 
     // --- the pipeline connected: SPEC -> approve -> BUILD -> VERIFY ---
 
-    /*
-     * DESIGN sits between SPEC and BUILD in the pipeline and lands in M5, so these
-     * tests enqueue BUILD directly with the approved spec — exactly what the DESIGN
-     * stage will hand over once it exists. Testing what M4 actually delivers rather
-     * than stubbing a stage that has not been built.
-     */
+    // --- the pipeline, continuous from spec through verification ---
 
     @Test
-    void shouldCarryAnApprovedSpecThroughBuildAndVerify() {
+    void shouldCarryAnApprovedSpecThroughDesignBuildAndVerify() {
         llm.respondWith(DRAFT)
+           .respondWith(DESIGN_NOTE)
            .respondWith(CHANGE_PLAN)
            .respondWith(assessmentVerifyingAll());
         codeExecutor.succeedsWith("BUILD SUCCESS")   // developer build
                     .succeedsWith("Tests run: 4")     // developer tests
                     .succeedsWith("Tests run: 4");    // QA run
 
-        givenApprovedSpecAndEnqueuedBuild();
-        worker.drain(5);
+        waveId = start();
+        worker.pollOnce();
+        approveSpec();
+        worker.drain(6);
 
+        assertEquals(StageStatus.SUCCEEDED,
+                stageRuns.findByWaveAndStage(waveId, SdlcStage.DESIGN).orElseThrow().getStatus());
         assertEquals(StageStatus.SUCCEEDED,
                 stageRuns.findByWaveAndStage(waveId, SdlcStage.BUILD).orElseThrow().getStatus());
         assertEquals(StageStatus.SUCCEEDED,
@@ -331,14 +344,36 @@ class StageMachineIntegrationTest {
     }
 
     @Test
+    void shouldFailDesignWhenItNamesAModuleThatDoesNotExist() {
+        // Caught at the cheapest possible moment, rather than surfacing as a build
+        // failure two stages later with no obvious cause.
+        llm.respondWith(DRAFT).respondWith(new com.agile.team.domain.artifact.DesignNote(
+                "Add a brand new service.",
+                List.of("src/main/java/InventedService.java"),
+                List.of(), "Tests.", false));
+
+        waveId = start();
+        worker.pollOnce();
+        approveSpec();
+        worker.pollOnce();
+
+        StageRun design = stageRuns.findByWaveAndStage(waveId, SdlcStage.DESIGN).orElseThrow();
+        assertEquals(StageStatus.RETRYING, design.getStatus());
+        assertTrue(design.getErrorMessage().contains("do not exist in the repository"));
+        assertTrue(stageRuns.findByWaveAndStage(waveId, SdlcStage.BUILD).isEmpty());
+    }
+
+    @Test
     void shouldFailTheBuildStageWhenTheBuildDoesNotCompile() {
         // The core guarantee of M4: an implementation that does not compile cannot
         // advance, whatever the model says about it.
-        llm.respondWith(DRAFT).respondWith(CHANGE_PLAN);
+        llm.respondWith(DRAFT).respondWith(DESIGN_NOTE).respondWith(CHANGE_PLAN);
         codeExecutor.failsWith(1, "SftpPoller.java:[12,5] cannot find symbol");
 
-        givenApprovedSpecAndEnqueuedBuild();
+        waveId = start();
         worker.pollOnce();
+        approveSpec();
+        worker.drain(3);
 
         StageRun build = stageRuns.findByWaveAndStage(waveId, SdlcStage.BUILD).orElseThrow();
         assertEquals(StageStatus.RETRYING, build.getStatus());
@@ -351,28 +386,29 @@ class StageMachineIntegrationTest {
     @Test
     void shouldFailVerifyWhenACriterionHasNoTestEvenThoughTheSuiteIsGreen() {
         llm.respondWith(DRAFT)
+           .respondWith(DESIGN_NOTE)
            .respondWith(CHANGE_PLAN)
            .respondWith(assessmentMissingOneCriterion());
         codeExecutor.succeedsWith("BUILD SUCCESS")
                     .succeedsWith("Tests run: 2")
                     .succeedsWith("Tests run: 2, Failures: 0");
 
-        givenApprovedSpecAndEnqueuedBuild();
-        worker.drain(5);
+        waveId = start();
+        worker.pollOnce();
+        approveSpec();
+        worker.drain(6);
 
         StageRun verify = stageRuns.findByWaveAndStage(waveId, SdlcStage.VERIFY).orElseThrow();
         assertEquals(StageStatus.RETRYING, verify.getStatus());
         assertTrue(verify.getErrorMessage().contains("Unverified criteria"));
     }
 
-    private void givenApprovedSpecAndEnqueuedBuild() {
-        waveId = start();
-        worker.pollOnce();
-        approveSpec();
-        // Stand in for the DESIGN handover.
-        Specification spec = waves.findById(waveId).orElseThrow().getSpecifications().get(0);
-        stageRuns.save(StageRun.enqueue(waveId, SdlcStage.BUILD, codec.write(spec.toDraft()), 3));
-    }
+    private static final com.agile.team.domain.artifact.DesignNote DESIGN_NOTE =
+            new com.agile.team.domain.artifact.DesignNote(
+                    "Wrap connect() in a bounded retry.",
+                    List.of("src/main/java/SftpPoller.java"),
+                    List.of("Retry could mask a permanent failure"),
+                    "Unit test the retry boundary.", false);
 
     // --- helpers ---
 

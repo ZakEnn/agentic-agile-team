@@ -209,6 +209,44 @@ can be added later as a supplement, never as the gate.
 
 ---
 
+## D-012 — The Release agent uses no language model
+
+**Context.** M5. Every other SDLC domain got an agent backed by `LlmGateway`.
+
+**Decision.** `ReleaseAgent` calls no model at all. It reads facts (allowed
+environment, frozen list, deployment window, currently-running version) and acts.
+
+**Why.** There is no judgment here for a model to add. Whether an environment is
+frozen is a lookup, not an opinion. Introducing a model would insert
+non-determinism into the single most irreversible step in the pipeline, in exchange
+for nothing. The plan's principle is "the LLM judges; it never integrates" — at this
+stage there is nothing to judge.
+
+**Consequence.** The roster is "one agent per SDLC domain", not "one model call per
+SDLC domain". If deploy-readiness later needs real judgment (interpreting canary
+metrics, say), that is the point to add a model — to the judgment, not to the action.
+
+---
+
+## D-013 — Design modules are verified against the repository, and that is on by default
+
+**Context.** M5. The Architect agent names the modules a change will touch.
+
+**Decision.** Every named module is checked against the real repository tree.
+Unverifiable means the stage fails. `sdlc.design.require-module-verification=false`
+is an explicit opt-out that degrades to a loud `UNVERIFIED` note.
+
+**Why.** An invented module name is the cheapest possible thing to catch and one of
+the most expensive to miss: it survives the design stage, becomes an invented file
+in the build stage, and surfaces as a compiler error with no obvious cause. Failing
+at the moment the claim is made costs one retry; failing later costs a confusing
+debugging session.
+
+**Consequence.** DESIGN cannot run against a repository the system cannot read.
+That is intended: designing against a repository you cannot see is guessing.
+
+---
+
 ## D-009 — `CodeQualityScore` gains an explicit `UNKNOWN` state
 
 **Context.** The original `ReviewerAgentHandler` hardcoded

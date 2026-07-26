@@ -29,6 +29,29 @@ sdlc:
     workspace-root: ${SDLC_WORKSPACE_ROOT:}
     allowed-commands: ${SDLC_ALLOWED_COMMANDS:mvn,mvnw,mvnw.cmd,gradle,gradlew,npm,node,git,java}
     default-timeout-seconds: ${SDLC_EXEC_TIMEOUT:600}
+  design:
+    # Impacted modules are checked against the real repository tree. Accepting them
+    # on faith is how a hallucinated module becomes a hallucinated file and then a
+    # build failure two stages later with no obvious cause.
+    require-module-verification: ${SDLC_REQUIRE_MODULE_VERIFICATION:true}
+  # Policy-as-code guardrails. Every check fails closed: an unlisted environment is
+  # refused, not permitted.
+  deployment:
+    default-environment: ${SDLC_DEPLOY_ENV:staging}
+    allowed-environments: ${SDLC_ALLOWED_ENVS:dev,staging}
+    production-environments: ${SDLC_PROD_ENVS:production,prod}
+    frozen-environments: ${SDLC_FROZEN_ENVS:}
+    block-outside-window: ${SDLC_BLOCK_OUTSIDE_WINDOW:true}
+    window-start: ${SDLC_WINDOW_START:09:00}
+    window-end: ${SDLC_WINDOW_END:16:00}
+    time-zone: ${SDLC_TIME_ZONE:Europe/Paris}
+    # No default deploy command: an unconfigured deployment adapter refuses rather
+    # than silently doing nothing and reporting success.
+    deploy-command: ${SDLC_DEPLOY_COMMAND:}
+    current-version-command: ${SDLC_CURRENT_VERSION_COMMAND:}
+    rollback-command: ${SDLC_ROLLBACK_COMMAND:}
+    url-template: ${SDLC_URL_TEMPLATE:}
+    timeout-seconds: ${SDLC_DEPLOY_TIMEOUT:900}
   build:
     command: ${SDLC_BUILD_COMMAND:mvn,-q,-B,compile}
     test-command: ${SDLC_TEST_COMMAND:mvn,-q,-B,test}
