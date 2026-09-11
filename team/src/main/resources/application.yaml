@@ -73,23 +73,23 @@ management:
       show-details: when-authorized
 
 confluence:
-  base-url: ${CONFLUENCE_BASE_URL:https://espace.agir.orange.com}
+  base-url: ${CONFLUENCE_BASE_URL:}
   access-token: ${CONFLUENCE_API_TOKEN:}
 
 # Toolchain integrations. All are deterministic REST clients — no port is ever
 # backed by a model call. Absent credentials degrade explicitly: SonarQube reports
 # UNKNOWN (which fails the ReviewGate), Jira context is skipped and noted.
 gitlab:
-  base-url: ${GITLAB_BASE_URL:https://gitlab.tech.orange}
+  base-url: ${GITLAB_BASE_URL:}
   token: ${GITLAB_API_TOKEN:}
 
 jira:
-  base-url: ${JIRA_BASE_URL:https://portail.agir.orange.com}
+  base-url: ${JIRA_BASE_URL:}
   email: ${JIRA_EMAIL:}
   api-token: ${JIRA_API_TOKEN:}
 
 sonarqube:
-  base-url: ${SONARQUBE_URL:https://sqaas.dos.tech.orange}
+  base-url: ${SONARQUBE_URL:}
   token: ${SONARQUBE_API_TOKEN:}
 
 spring:
@@ -128,38 +128,3 @@ spring:
         options:
           model: claude-sonnet-5
           max-tokens: 8192
-    mcp:
-      client:
-        enabled: false
-        request-timeout: 120s
-        stdio:
-          connections:
-            # TODO: remove once REST-based Confluence integration is validated
-            # confluence:
-            #   command: ${NODE_PATH:C:/Users/Zennajeh/AppData/Roaming/nvm/v22.16.0/node.exe}
-            #   args:
-            #     - ${MCP_CONFLUENCE_SCRIPT:C:/Users/Zennajeh/AppData/Roaming/nvm/v22.16.0/node_modules/@atlassian-dc-mcp/confluence/bin/run.js}
-            #   env:
-            #     CONFLUENCE_HOST: espace.agir.orange.com
-            #     CONFLUENCE_API_TOKEN: ${CONFLUENCE_API_TOKEN:}
-            jira:
-              command: ${NODE_PATH:C:/Users/Zennajeh/AppData/Roaming/nvm/v22.16.0/node.exe}
-              args:
-                - ${MCP_JIRA_SCRIPT:C:/Users/Zennajeh/AppData/Roaming/nvm/v22.16.0/node_modules/@atlassian-dc-mcp/jira/bin/run.js}
-              env:
-                JIRA_HOST: portail.agir.orange.com
-                JIRA_API_TOKEN: ${JIRA_API_TOKEN:}
-            gitlab:
-              command: ${NODE_PATH:C:/Users/Zennajeh/AppData/Roaming/nvm/v22.16.0/node.exe}
-              args:
-                - ${MCP_GITLAB_SCRIPT:C:/Users/Zennajeh/AppData/Roaming/nvm/v22.16.0/node_modules/@zereight/mcp-gitlab/build/index.js}
-              env:
-                GITLAB_API_URL: https://gitlab.tech.orange/api/v4
-                GITLAB_PERSONAL_ACCESS_TOKEN: ${GITLAB_API_TOKEN:}
-            sonarqube:
-              command: ${NODE_PATH:C:/Users/Zennajeh/AppData/Roaming/nvm/v22.16.0/node.exe}
-              args:
-                - ${MCP_SONARQUBE_SCRIPT:C:/Users/Zennajeh/AppData/Roaming/nvm/v22.16.0/node_modules/mcp-sonarqube/dist/index.js}
-              env:
-                SONARQUBE_URL: https://sqaas.dos.tech.orange
-                SONARQUBE_TOKEN: ${SONARQUBE_API_TOKEN:}
