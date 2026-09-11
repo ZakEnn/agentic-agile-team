@@ -6,6 +6,8 @@
 
 The system uses **Spring AI** with Claude (Anthropic) as the LLM backbone and **MCP (Model Context Protocol)** clients to interact with external tools (Confluence, GitLab, Jira, SonarQube).
 
+<img width="1581" height="716" alt="image" src="https://github.com/user-attachments/assets/38f88826-6f29-4426-b65e-8a5d1a2dcf38" />
+
 ---
 
 ## Architecture
